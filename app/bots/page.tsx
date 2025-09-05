@@ -1,6 +1,4 @@
-// app/bots/page.tsx
-"use client";
-
+// app/bots/page.tsximport { Suspense } from "react";
 import { Suspense } from "react";
 import BotsClient from "./BotsClient";
 
