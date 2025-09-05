@@ -1,29 +1,18 @@
 // app/bots/page.tsx
+"use client";
+
 import { Suspense } from "react";
 import BotsClient from "./BotsClient";
 
-// Garante que a rota /bots não será pré-renderizada estaticamente.
-// Isso evita o erro de "useSearchParams() should be wrapped in a suspense boundary".
+// Evita qualquer pré-renderização/SSR dessa rota
 export const dynamic = "force-dynamic";
+export const fetchCache = "force-no-store";
+export const revalidate = 0;
 
-type SearchParams = {
-  game?: string;
-  casa?: string;
-};
-
-export default function BotsPage({
-  searchParams,
-}: {
-  searchParams: SearchParams;
-}) {
-  const initialGame =
-    typeof searchParams?.game === "string" ? searchParams.game : "";
-  const initialCasa =
-    typeof searchParams?.casa === "string" ? searchParams.casa : "";
-
+export default function BotsPage() {
   return (
-    <Suspense fallback={<div>Carregando…</div>}>
-      <BotsClient initialGame={initialGame} initialCasa={initialCasa} />
+    <Suspense fallback={<div>Carregando bots...</div>}>
+      <BotsClient />
     </Suspense>
   );
 }
