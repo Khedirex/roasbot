@@ -1,7 +1,8 @@
+// app/bots/BotsClient.tsx
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import RobotManager from "@/components/RobotManager";
 
 type Casa = { label: string; slug: string };
