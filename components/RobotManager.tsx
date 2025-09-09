@@ -1,3 +1,4 @@
+// components/RobotManager.tsx
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
@@ -6,9 +7,10 @@ import {
   type Strategy as PanelStrategy,
   type Color,
 } from "@/app/bots/aviator/StrategiesPanel";
-import type { StrategyMessages } from "@/app/bots/aviator/StrategyMessagesForm";
+// Se tiver mensagens por estratégia, reative o import:
+// import type { StrategyMessages } from "@/app/bots/aviator/StrategyMessagesForm";
 
-/** ===== Tipos locais ===== */
+/** ===== Tipos ===== */
 type Metrics = { jogadas: number; greens: number; reds: number };
 
 type Strategy = {
@@ -20,8 +22,7 @@ type Strategy = {
   enabled: boolean;
   pattern: string[];
   winAt: number;
-  /** NOVO: mensagens configuráveis por estratégia (persistidas no storage) */
-  messages?: StrategyMessages;
+  // messages?: StrategyMessages;
 };
 
 type Robot = {
@@ -29,65 +30,145 @@ type Robot = {
   name: string;
   startHour: string;
   endHour: string;
-  martingale: number; // mantido p/ compat
+  martingale: number;
   botToken: string;
   chatId: string;
   strategies: Strategy[];
   metrics: Metrics;
 };
 
-type Props = { botId: string; casa: string };
+type Game = "aviator" | "bacbo";
+type CasaSlug = "1win" | "lebull";
 
-const STORAGE_PREFIX = "roasbot:robots";
+/** Aceita botId (preferível) ou bot+casa */
+type Props = { botId?: string; bot?: Game; casa: CasaSlug };
 
-export default function RobotManager({ botId, casa }: Props) {
-  const storageKey = useMemo(() => `${STORAGE_PREFIX}:${botId}:${casa}`, [botId, casa]);
+/* ===== Registro global (usado por /bots e /) ===== */
+type BotMeta = { id: string; game: Game; casa: CasaSlug; label: string };
+const BOTS_KEY = "roasbot.bots";
+
+function labelOf(game: Game, casa: CasaSlug) {
+  return `${game === "aviator" ? "Aviator" : "Bac Bo"} @ ${
+    casa === "1win" ? "1Win" : "LeBull"
+  }`;
+}
+
+function upsertBotInRegistry(game: Game, casa: CasaSlug) {
+  const id = `${game}-${casa}`;
+  const label = labelOf(game, casa);
+  try {
+    const raw = localStorage.getItem(BOTS_KEY);
+    const arr: BotMeta[] = raw ? JSON.parse(raw) : [];
+    const i = arr.findIndex((b) => b.id === id);
+    if (i >= 0) arr[i] = { id, game, casa, label };
+    else arr.push({ id, game, casa, label });
+    localStorage.setItem(BOTS_KEY, JSON.stringify(arr));
+  } catch {}
+}
+
+function removeBotFromRegistry(botId: string) {
+  try {
+    const raw = localStorage.getItem(BOTS_KEY);
+    const arr: BotMeta[] = raw ? JSON.parse(raw) : [];
+    const next = arr.filter((b) => b.id !== botId);
+    localStorage.setItem(BOTS_KEY, JSON.stringify(next));
+  } catch {}
+}
+
+/* ===== Chaves de storage =====
+ * Lista: roasbot:robots:<botId>:list
+ */
+const LIST_PREFIX = "roasbot:robots";
+
+export default function RobotManager({ botId, bot, casa }: Props) {
+  // Deriva botId verdadeiro de forma segura
+  const realBotId = useMemo(() => {
+    if (botId) return botId;
+    if (bot && casa) return `${bot}-${casa}`;
+    return "";
+  }, [botId, bot, casa]);
+
+  if (!realBotId) {
+    return (
+      <div className="rounded-lg border p-4 text-sm text-red-600">
+        Parâmetros inválidos: informe <code>botId</code> ou <code>bot</code>+<code>casa</code>.
+      </div>
+    );
+  }
+
+  const [gameFromId, casaFromId] = useMemo(
+    () => realBotId.split("-") as [Game, CasaSlug],
+    [realBotId]
+  );
+
+  // Garante que este par esteja no registro global ao abrir a tela
+  useEffect(() => {
+    upsertBotInRegistry(gameFromId, casaFromId);
+  }, [gameFromId, casaFromId]);
+
+  // chave estável e padronizada com a Home
+  const storageKey = useMemo(() => `${LIST_PREFIX}:${realBotId}:list`, [realBotId]);
 
   const [robots, setRobots] = useState<Robot[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
+  // --- Hidratação: evita sobrescrever com [] antes de ler do storage
+  const [hydrated, setHydrated] = useState(false);
+
   const PALETTE = ["green", "gray", "black", "red", "blue", "pink"] as const;
-  type PaletteColor = (typeof PALETTE)[number];
   const isColor = (v: unknown): v is Color =>
     (PALETTE as readonly string[]).includes(v as string);
 
   const enabledKey = useMemo(
-    () => (selectedId ? `roasbot:${botId}:${casa}:${selectedId}:enabled` : ""),
-    [botId, casa, selectedId]
+    () => (selectedId ? `roasbot:${realBotId}:${selectedId}:enabled` : ""),
+    [realBotId, selectedId]
   );
   const [enabled, setEnabled] = useState(false);
   const [activeStrategies, setActiveStrategies] = useState<number>(0);
 
-  // controla visibilidade da caixa de criação de estratégia
   const [showStrategyEditor, setShowStrategyEditor] = useState(false);
 
+  /* ====== Ler lista de robôs uma vez ao montar / mudar botId ====== */
   useEffect(() => {
-    const raw = localStorage.getItem(storageKey);
-    if (raw) {
-      const parsed = JSON.parse(raw) as Robot[];
-      setRobots(parsed);
-      setSelectedId((prev) =>
-        prev && parsed.some((r) => r.id === prev) ? prev : parsed[0]?.id ?? null
-      );
-    } else {
-      setRobots([]);
-      setSelectedId(null);
+    try {
+      const raw = localStorage.getItem(storageKey);
+      if (raw) {
+        const parsed = JSON.parse(raw) as Robot[];
+        setRobots(parsed);
+        setSelectedId((prev) =>
+          prev && parsed.some((r) => r.id === prev) ? prev : parsed[0]?.id ?? null
+        );
+      } else {
+        setRobots([]);
+        setSelectedId(null);
+      }
+    } finally {
+      setHydrated(true); // só depois da leitura inicial
     }
   }, [storageKey]);
 
+  /* ====== Persistir a lista somente após hidratar ====== */
   useEffect(() => {
-    localStorage.setItem(storageKey, JSON.stringify(robots));
-  }, [robots, storageKey]);
+    if (!hydrated) return;
+    try {
+      localStorage.setItem(storageKey, JSON.stringify(robots));
+    } catch {}
+  }, [hydrated, robots, storageKey]);
 
+  /* ====== Flag ligado/desligado do robô selecionado ====== */
   useEffect(() => {
     if (!enabledKey) return;
-    const raw = localStorage.getItem(enabledKey);
-    setEnabled(raw === "true");
+    try {
+      const raw = localStorage.getItem(enabledKey);
+      setEnabled(raw === "true");
+    } catch {}
   }, [enabledKey]);
 
   useEffect(() => {
     if (!enabledKey) return;
-    localStorage.setItem(enabledKey, String(enabled));
+    try {
+      localStorage.setItem(enabledKey, String(enabled));
+    } catch {}
   }, [enabled, enabledKey]);
 
   const selected = robots.find((r) => r.id === selectedId) ?? null;
@@ -116,6 +197,8 @@ export default function RobotManager({ botId, casa }: Props) {
     };
     setRobots((prev) => [newRobot, ...prev]);
     setSelectedId(newRobot.id);
+    // reforça o registro do par atual
+    upsertBotInRegistry(gameFromId, casaFromId);
   }
 
   function updateRobot(patch: Partial<Robot>) {
@@ -124,7 +207,12 @@ export default function RobotManager({ botId, casa }: Props) {
   }
 
   function removeRobot(id: string) {
-    setRobots((prev) => prev.filter((r) => r.id !== id));
+    setRobots((prev) => {
+      const next = prev.filter((r) => r.id !== id);
+      // se removeu o último robô deste par, limpa do registro global (opcional)
+      if (next.length === 0) removeBotFromRegistry(realBotId);
+      return next;
+    });
     setSelectedId((prev) => (prev === id ? null : prev));
   }
 
@@ -147,8 +235,7 @@ export default function RobotManager({ botId, casa }: Props) {
       enabled: s.enabled,
       winAt: s.winAt,
       pattern: (s.pattern as string[]) ?? [],
-      // NOVO: traz de volta as mensagens do painel (se houver)
-      messages: s.messages,
+      // messages: s.messages,
     }));
     updateRobot({ strategies: converted });
   }
@@ -184,28 +271,28 @@ export default function RobotManager({ botId, casa }: Props) {
     setActiveStrategies(next.filter((s) => s.enabled).length);
   }
 
+  const gameLabel = gameFromId === "aviator" ? "Aviator" : "Bac Bo";
+  const casaLabel = casaFromId === "1win" ? "1Win" : "LeBull";
+
   return (
     <div className="space-y-6">
-      {/* PRIMEIRA PARTE: controles superiores */}
+      {/* Controles superiores */}
       <div className="rounded-xl border bg-white p-4">
         <div className="grid gap-4 md:grid-cols-4 items-end">
-          {/* Jogo */}
           <div>
             <label className="block text-sm font-medium mb-1">Jogo</label>
-            <select value={botId} disabled className="w-full rounded-lg border px-3 py-2 bg-gray-50">
-              <option value={botId}>Aviator</option>
+            <select value={gameFromId} disabled className="w-full rounded-lg border px-3 py-2 bg-gray-50">
+              <option value={gameFromId}>{gameLabel}</option>
             </select>
           </div>
 
-          {/* Casa */}
           <div>
             <label className="block text-sm font-medium mb-1">Casa</label>
-            <select value={casa} disabled className="w-full rounded-lg border px-3 py-2 bg-gray-50">
-              <option value={casa}>{casa}</option>
+            <select value={casaFromId} disabled className="w-full rounded-lg border px-3 py-2 bg-gray-50">
+              <option value={casaFromId}>{casaLabel}</option>
             </select>
           </div>
 
-          {/* Botão central alinhado às caixas */}
           <div className="flex justify-center">
             <button
               onClick={addRobot}
@@ -215,7 +302,6 @@ export default function RobotManager({ botId, casa }: Props) {
             </button>
           </div>
 
-          {/* Select do Robot */}
           <div>
             <label className="block text-sm font-medium mb-1">Robot</label>
             <select
@@ -301,7 +387,6 @@ export default function RobotManager({ botId, casa }: Props) {
                   <Field label="Fim" type="time" value={selected.endHour} onChange={(v) => updateRobot({ endHour: v })} />
                 </div>
 
-                {/* Bot Token largura total */}
                 <div className="grid grid-cols-1 gap-4 mt-4">
                   <Field
                     label="Bot Token"
@@ -310,7 +395,6 @@ export default function RobotManager({ botId, casa }: Props) {
                   />
                 </div>
 
-                {/* Chat ID meia largura abaixo */}
                 <div className="grid md:grid-cols-2 gap-4 mt-4">
                   <Field
                     label="Chat ID"
@@ -330,8 +414,6 @@ export default function RobotManager({ botId, casa }: Props) {
         <div className="rounded-xl border bg-white p-4">
           <div className="flex items-center justify-between mb-3">
             <h3 className="font-medium">Estratégia</h3>
-
-            {/* Botão que abre a caixa de criação; some quando aberto */}
             {!showStrategyEditor && (
               <button
                 className="px-3 py-2 rounded-lg bg-blue-600 text-white hover:bg-blue-700"
@@ -343,8 +425,8 @@ export default function RobotManager({ botId, casa }: Props) {
           </div>
 
           <StrategiesPanel
-            bot={botId}
-            casa={casa}
+            bot={gameFromId}
+            casa={casaFromId}
             robotId={selected.id}
             strategies={(selected.strategies ?? []).map<PanelStrategy>((s) => ({
               id: s.id,
@@ -354,16 +436,13 @@ export default function RobotManager({ botId, casa }: Props) {
               mgCount: s.mgCount,
               enabled: s.enabled,
               winAt: s.winAt,
-              messages: s.messages, // passa mensagens para o painel
+              // messages: s.messages,
               pattern: (s.pattern as Array<string | Color>).map<Color>((c) =>
                 isColor(c) ? c : ("gray" as Color)
               ),
             }))}
-
             onChange={(next) => {
-              setStrategies(next); // já converte e persiste (inclui messages)
-              // se quiser fechar automaticamente após criar, descomente:
-              // setShowStrategyEditor(false);
+              setStrategies(next);
             }}
             onDuplicate={duplicateStrategy}
             onDelete={deleteStrategy}
@@ -380,7 +459,6 @@ export default function RobotManager({ botId, casa }: Props) {
 }
 
 /* ---------- UI helpers ---------- */
-
 function Field({
   label,
   value,
