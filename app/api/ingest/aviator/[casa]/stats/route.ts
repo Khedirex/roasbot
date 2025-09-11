@@ -6,7 +6,8 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const ALLOWED_CASAS = ["1win"] as const;
-const ALLOWED_SET = new Set<typeof ALLOWED_CASAS[number]>(ALLOWED_CASAS);
+type Casa = (typeof ALLOWED_CASAS)[number];
+const ALLOWED_SET = new Set<Casa>(ALLOWED_CASAS);
 
 function json(status: number, data: unknown) {
   return new NextResponse(JSON.stringify(data), {
@@ -29,13 +30,15 @@ function percentile(sorted: number[], p: number) {
 
 export async function GET(
   req: Request,
-  { params }: { params: { casa: string } }
+  ctx: { params: Promise<{ casa: string }> } // <<< Next 15: params é Promise
 ) {
   try {
     const url = new URL(req.url);
-    const casa = (params.casa || "").toLowerCase();
-    if (!ALLOWED_SET.has(casa as any)) {
-      return json(400, { ok: false, error: "invalid_casa", casa });
+    const { casa: casaRaw } = await ctx.params; // <<< aguarda params
+    const casaLc = (casaRaw || "").toLowerCase() as Casa;
+
+    if (!ALLOWED_SET.has(casaLc)) {
+      return json(400, { ok: false, error: "invalid_casa", casa: casaRaw });
     }
 
     // limite de pontos usados na janela das estatísticas
@@ -44,7 +47,7 @@ export async function GET(
 
     // pega últimos N por ts desc — mais prático para SQLite
     const rows = await prisma.ingestEvent.findMany({
-      where: { game: "aviator", casa },
+      where: { game: "aviator", casa: casaLc },
       orderBy: { ts: "desc" },
       take: limit,
       select: { value: true, ts: true, createdAt: true },
@@ -71,7 +74,7 @@ export async function GET(
 
     return json(200, {
       ok: true,
-      casa,
+      casa: casaLc,
       count,
       window: { fromTs, toTs },
       stats: { min, max, avg, p50, p90, p99 },
