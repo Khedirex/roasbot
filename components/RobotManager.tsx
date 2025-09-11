@@ -6,7 +6,7 @@ import {
   StrategiesPanel,
   type Strategy as PanelStrategy,
   type Color,
-} from "@/app/bots/aviator/StrategiesPanel";
+} from "@/app/(app)/bots/aviator/StrategiesPanel";
 // Se tiver mensagens por estratégia, reative o import:
 // import type { StrategyMessages } from "@/app/bots/aviator/StrategyMessagesForm";
 

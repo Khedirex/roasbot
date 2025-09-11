@@ -1,0 +1,40 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  USER
+  ADMIN
+}
+
+model User {
+  id        String   @id @default(cuid())
+  name      String?
+  email     String   @unique
+  password  String   // hash (bcryptjs)
+  role      Role     @default(USER)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([role, createdAt])
+}
+
+model IngestEvent {
+  id        String   @id @default(cuid())
+  game      String   // ex: "aviator"
+  casa      String   // ex: "1win"
+  value     Float
+  ts        BigInt   // timestamp do evento (epoch ms)
+  ip        String?  // opcional, IP de origem
+  userAgent String?  // opcional, user-agent
+  createdAt DateTime @default(now()) // momento de inserção
+
+  // Índices para consultas mais comuns
+  @@index([game, casa, createdAt])
+  @@index([game, casa, ts])
+}
