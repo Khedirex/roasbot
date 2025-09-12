@@ -3,26 +3,55 @@ import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 import { getToken } from "next-auth/jwt";
 
-// rotas/paths SEM proteção
+// 🔓 Rotas públicas exatas
 const PUBLIC_PATHS = new Set<string>([
-  "/", "/login", "/register", "/healthz",
+  "/login",
+  "/register",
+  "/healthz",
+  "/", // se quiser proteger a home, remova esta linha
 ]);
 
-// prefixos SEM proteção (assets/infra)
-const PUBLIC_PREFIXES = ["/_next", "/favicon", "/icons", "/images", "/api/auth", "/api/ingest"];
+// 🔓 Prefixos públicos (estáticos + APIs liberadas)
+const PUBLIC_PREFIXES = [
+  "/_next",
+  "/favicon", "/favicon.ico",
+  "/icons", "/images", "/public",
+  "/robots.txt", "/sitemap.xml", "/manifest.json", "/apple-touch-icon",
+  "/api/auth",
+  "/api/ingest", // ingest liberado
+];
 
 export async function middleware(req: NextRequest) {
-  const { pathname } = req.nextUrl;
+  const { pathname, search, hash, origin } = req.nextUrl;
 
-  // 1) libera rotas públicas exatas
-  if (PUBLIC_PATHS.has(pathname)) return NextResponse.next();
+  // 0) Pré-flight/CORS das APIs liberadas (evita 404/401 em OPTIONS)
+  if (req.method === "OPTIONS" && pathname.startsWith("/api/ingest")) {
+    return new NextResponse(null, {
+      status: 204,
+      headers: {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
+        "Access-Control-Allow-Headers": "content-type,authorization,x-api-key",
+      },
+    });
+  }
 
-  // 2) libera prefixos públicos (assets e APIs liberadas)
+  // 1) Libera rotas públicas exatas
+  if (PUBLIC_PATHS.has(pathname)) {
+    // se já estiver logado e for /login, manda pra home
+    if (pathname === "/login") {
+      const token = await getToken({ req, secret: process.env.NEXTAUTH_SECRET });
+      if (token) return NextResponse.redirect(new URL("/", origin));
+    }
+    return NextResponse.next();
+  }
+
+  // 2) Libera prefixos públicos
   for (const p of PUBLIC_PREFIXES) {
     if (pathname.startsWith(p)) return NextResponse.next();
   }
 
-  // 3) protege o restante
+  // 3) Protege o restante
   const token = await getToken({ req, secret: process.env.NEXTAUTH_SECRET });
 
   // 3a) APIs protegidas → 401 JSON
@@ -33,21 +62,22 @@ export async function middleware(req: NextRequest) {
     });
   }
 
-  // 3b) páginas protegidas → redirect para /login com callbackUrl
+  // 3b) Páginas protegidas → redirect para /login com callbackUrl completo
   if (!token) {
-    const url = new URL("/login", req.url);
-    url.searchParams.set("callbackUrl", pathname);
+    const returnTo = `${pathname}${search || ""}${hash || ""}`;
+    const url = new URL("/login", origin);
+    url.searchParams.set("callbackUrl", returnTo);
     return NextResponse.redirect(url);
   }
 
-  // 4) ok
+  // 4) OK
   return NextResponse.next();
 }
 
-// Evita rodar em tudo que já está liberado
+// 🔧 Aplica o middleware em tudo, exceto o que já é público
 export const config = {
   matcher: [
-    // aplica em qualquer rota que NÃO comece pelos prefixos abaixo
-    "/((?!_next|favicon|icons|images|api/auth|api/ingest).*)",
+    // Qualquer rota que NÃO comece com os prefixos abaixo
+    "/((?!_next|favicon|icons|images|public|robots\\.txt|sitemap\\.xml|manifest\\.json|apple-touch-icon|api/auth|api/ingest).*)",
   ],
 };

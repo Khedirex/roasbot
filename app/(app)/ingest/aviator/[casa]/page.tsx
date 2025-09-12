@@ -1,12 +1,12 @@
-// app/(app)/ingest/aviator/[casa]/page.tsx
-import ChartAviator from "./ChartAviator";
+import ClientPage from './ClientPage';
 
-export default async function Page({ params }: { params: { casa: string } }) {
-  const casa = (params.casa || "").toLowerCase();
+export default function IngestAviatorPage({ params }: { params: { casa: string } }) {
+  const casa = (params.casa || '').toLowerCase();
+
   return (
-    <div className="p-6 max-w-5xl mx-auto space-y-6">
-      <h1 className="text-2xl font-semibold">Aviator • {casa}</h1>
-      <ChartAviator casa={casa} />
-    </div>
+    <section className="p-4 space-y-4">
+      <h1 className="text-xl font-semibold">Últimos sinais • Aviator • {casa}</h1>
+      <ClientPage casa={casa} />
+    </section>
   );
 }
