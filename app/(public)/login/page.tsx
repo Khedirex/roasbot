@@ -1,19 +1,9 @@
+// app/(public)/login/page.tsx
 "use client";
 
-import { useState, useEffect, FormEvent, useMemo } from "react";
+import { useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { signIn, useSession } from "next-auth/react";
-
-function mapError(param: string | null) {
-  if (!param) return null;
-  const errors: Record<string, string> = {
-    CredentialsSignin: "Credenciais inválidas.",
-    AccessDenied: "Acesso negado.",
-    OAuthAccountNotLinked: "Conta não vinculada.",
-    Default: "Não foi possível entrar.",
-  };
-  return errors[param] ?? "Não foi possível entrar.";
-}
 
 export default function LoginPage() {
   const router = useRouter();
@@ -22,84 +12,102 @@ export default function LoginPage() {
 
   // aceita ?callbackUrl=/bots, mas só se for caminho interno
   const callbackUrl = useMemo(() => {
-    const raw = sp.get("callbackUrl") ?? "/";
-    return raw.startsWith("/") ? raw : "/";
+    const raw = sp.get("callbackUrl") || "/";
+    try {
+      // apenas caminhos internos (começando com /)
+      return raw.startsWith("/") ? raw : "/";
+    } catch {
+      return "/";
+    }
   }, [sp]);
 
+  const [email, setEmail] = useState("marcelinow7@gmail.com");
+  const [password, setPassword] = useState("Willian12@");
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(mapError(sp.get("error")));
+  const [err, setErr] = useState<string | null>(null);
 
-  // Se já estiver autenticado e abrir /login, manda para callbackUrl (ou /)
-  useEffect(() => {
-    if (status === "authenticated") router.replace(callbackUrl);
-  }, [status, router, callbackUrl]);
+  // se já está logado, manda para o destino
+  if (status === "authenticated") {
+    router.replace(callbackUrl);
+    return null;
+  }
 
-  async function onSubmit(e: FormEvent<HTMLFormElement>) {
+  async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (loading) return;
-    setError(null);
+    setErr(null);
     setLoading(true);
 
-    try {
-      const form = new FormData(e.currentTarget);
-      const email = String(form.get("email") ?? "").trim().toLowerCase();
-      const password = String(form.get("password") ?? "");
+    const res = await signIn("credentials", {
+      redirect: false,
+      email,
+      password,
+      callbackUrl,
+    });
 
-      // redirect total garante cookie e navegação estável
-      await signIn("credentials", {
-        email,
-        password,
-        callbackUrl,    // "/" por padrão ou o que vier na URL
-        redirect: true,
-      });
-      // em sucesso, o fluxo redireciona e não passa por aqui
-    } catch {
-      setError("Não foi possível entrar.");
-      setLoading(false);
+    setLoading(false);
+
+    if (!res) {
+      setErr("Falha inesperada.");
+      return;
     }
+    if (res.error) {
+      setErr("Credenciais inválidas.");
+      return;
+    }
+    // sucesso
+    router.replace(res.url ?? callbackUrl);
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-50 p-6">
-      <div className="w-full max-w-sm bg-white rounded-2xl shadow p-6 space-y-4">
-        <h1 className="text-2xl font-bold text-center">Entrar</h1>
+    <div className="min-h-screen grid place-items-center bg-gray-100 p-6">
+      <form
+        onSubmit={onSubmit}
+        className="w-full max-w-sm bg-white rounded-xl shadow p-6 space-y-4"
+      >
+        <h1 className="text-xl font-semibold">Entrar</h1>
 
-        {error ? <p className="text-sm text-red-600">{error}</p> : null}
-
-        <form onSubmit={onSubmit} className="space-y-3">
-          <div>
-            <label className="text-sm">E-mail</label>
-            <input
-              name="email"
-              type="email"
-              required
-              autoComplete="email"
-              disabled={loading}
-              className="w-full border rounded-lg p-2"
-            />
+        {err && (
+          <div className="text-sm text-red-600 bg-red-50 border border-red-200 rounded p-2">
+            {err}
           </div>
-          <div>
-            <label className="text-sm">Senha</label>
-            <input
-              name="password"
-              type="password"
-              required
-              autoComplete="current-password"
-              disabled={loading}
-              className="w-full border rounded-lg p-2"
-            />
-          </div>
-          <button
-            disabled={loading}
-            className="w-full rounded-xl p-2 font-medium bg-black text-white hover:opacity-90 disabled:opacity-60"
-          >
-            {loading ? "Entrando..." : "Entrar"}
-          </button>
-        </form>
+        )}
 
-        {/* Se o cadastro público estiver desativado, remova o link abaixo */}
-        {/* <a href="/register" className="text-sm text-center block underline">Criar conta</a> */}
-      </div>
+        <label className="block">
+          <span className="text-sm text-gray-700">Email</span>
+          <input
+            type="email"
+            className="mt-1 w-full border rounded px-3 py-2 outline-none focus:ring"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            autoComplete="email"
+            required
+          />
+        </label>
+
+        <label className="block">
+          <span className="text-sm text-gray-700">Senha</span>
+          <input
+            type="password"
+            className="mt-1 w-full border rounded px-3 py-2 outline-none focus:ring"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            autoComplete="current-password"
+            required
+          />
+        </label>
+
+        <button
+          type="submit"
+          disabled={loading}
+          className="w-full rounded-lg bg-black text-white py-2 disabled:opacity-60"
+        >
+          {loading ? "Entrando..." : "Entrar"}
+        </button>
+
+        <p className="text-xs text-gray-500">
+          Você será redirecionado para: <code>{callbackUrl}</code>
+        </p>
+      </form>
     </div>
   );
 }

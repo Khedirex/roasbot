@@ -1,3 +1,6 @@
-export default function PublicLayout({ children }: { children: React.ReactNode }) {
-  return children; // sem sidebar, só o conteúdo (login/register)
+// app/(public)/layout.tsx
+import type { ReactNode } from "react";
+
+export default function PublicLayout({ children }: { children: ReactNode }) {
+  return <div className="min-h-screen">{children}</div>;
 }
