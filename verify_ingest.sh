@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-HOST="${HOST:-https://musical-dollop-974g5x9j654jh7645-3000.app.github.dev}"
+HOST="${https://glorious-xylophone-x5qgp4wvrp4qh575-3000.app.github.dev}"
 TOKEN="${TOKEN:-ce3de8ddd3466f59f084b2e9b2ef2a359c5f43903eacfe162418adcd25ca8af8}"
 CASA="${CASA:-1win}"
 VALOR="${VALOR:-4.56}"

@@ -1,0 +1,31 @@
+
+> roasbot@0.1.0 dev
+> next dev --turbopack -p 3001 -H 0.0.0.0
+
+   ▲ Next.js 15.5.2 (Turbopack)
+   - Local:        http://localhost:3001
+   - Network:      http://0.0.0.0:3001
+   - Environments: .env
+
+ ✓ Starting...
+Attention: Next.js now collects completely anonymous telemetry regarding usage.
+This information is used to shape Next.js' roadmap and prioritize features.
+You can learn more, including how to opt-out if you'd not like to participate in this anonymous program, by visiting the following URL:
+https://nextjs.org/telemetry
+
+ ○ Compiling middleware ...
+ ✓ Compiled middleware in 861ms
+ ✓ Ready in 2.1s
+ ○ Compiling / ...
+ ✓ Compiled / in 6.1s
+ GET / 200 in 6843ms
+ ○ Compiling /api/auth/[...nextauth] ...
+ ✓ Compiled /api/auth/[...nextauth] in 1153ms
+ GET /api/auth/session 200 in 2241ms
+ ✓ Compiled /login in 439ms
+ GET /login?callbackUrl=%2Fbots 200 in 530ms
+ GET /api/auth/providers 200 in 281ms
+ GET /api/auth/csrf 200 in 327ms
+ POST /api/auth/callback/credentials 401 in 328ms
+ GET / 200 in 179ms
+ GET /api/auth/session 200 in 257ms
