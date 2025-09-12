@@ -7,7 +7,6 @@ import {
   type Strategy as PanelStrategy,
   type Color,
 } from "@/app/(app)/bots/aviator/StrategiesPanel";
-// ✅ importe o tipo das mensagens
 import type { StrategyMessages } from "@/app/(app)/bots/aviator/StrategyMessagesForm";
 
 /** ===== Tipos ===== */
@@ -22,7 +21,6 @@ type Strategy = {
   enabled: boolean;
   pattern: string[];
   winAt: number;
-  /** ✅ mantém as mensagens da estratégia */
   messages?: StrategyMessages;
 };
 
@@ -74,10 +72,40 @@ function removeBotFromRegistry(botId: string) {
   } catch {}
 }
 
-/* ===== Chaves de storage =====
- * Lista: roasbot:robots:<botId>:list
- */
+/* ===== Chaves de storage ===== */
 const LIST_PREFIX = "roasbot:robots";
+
+/** ===== Helpers p/ renderização & envio ===== */
+async function renderMessage(template: string, ctx: any) {
+  const res = await fetch("/api/messages/render", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ template, ctx }),
+    cache: "no-store",
+  });
+  if (!res.ok) throw new Error(`render failed: ${res.status}`);
+  const json = await res.json();
+  return json.text as string;
+}
+
+// ✅ envia via seu endpoint (sem CORS)
+async function sendViaApi(botToken: string, chatId: string, text: string) {
+  const resp = await fetch("/api/send/telegram", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      botToken,
+      chatId,
+      text,
+      disable_web_page_preview: true,
+    }),
+  });
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok || data?.ok === false) {
+    const reason = data?.response?.description || data?.message || `HTTP ${resp.status}`;
+    throw new Error(`Falha ao enviar: ${reason}`);
+  }
+}
 
 export default function RobotManager({ botId, bot, casa }: Props) {
   // Deriva botId
@@ -122,7 +150,6 @@ export default function RobotManager({ botId, bot, casa }: Props) {
   const [enabled, setEnabled] = useState(false);
   const [activeStrategies, setActiveStrategies] = useState<number>(0);
 
-  // só alterna o editor; a lista fica sempre visível
   const [showStrategyEditor, setShowStrategyEditor] = useState(false);
 
   /* ====== Ler lista ====== */
@@ -221,7 +248,6 @@ export default function RobotManager({ botId, bot, casa }: Props) {
 
   /** ===== Estratégias ===== */
   function setStrategies(next: PanelStrategy[]) {
-    // ✅ preserva e salva messages
     const converted: Strategy[] = next.map((s) => ({
       id: s.id,
       name: s.name,
@@ -231,7 +257,7 @@ export default function RobotManager({ botId, bot, casa }: Props) {
       enabled: s.enabled,
       winAt: s.winAt,
       pattern: (s.pattern as string[]) ?? [],
-      messages: s.messages, // ✅ aqui!
+      messages: s.messages,
     }));
     updateRobot({ strategies: converted });
   }
@@ -265,6 +291,103 @@ export default function RobotManager({ botId, bot, casa }: Props) {
     );
     updateRobot({ strategies: next });
     setActiveStrategies(next.filter((s) => s.enabled).length);
+  }
+
+  /** ===== Ações de teste (preview / enviar) ===== */
+  const [sending, setSending] = useState(false);
+
+  const strategyForTest = useMemo(() => {
+    const list = selected?.strategies ?? [];
+    return list.find((s) => s.enabled) ?? list[0] ?? null;
+  }, [selected?.strategies]);
+
+  async function handlePreviewWin() {
+    if (!strategyForTest) {
+      alert("Crie uma estratégia primeiro.");
+      return;
+    }
+    const template =
+      strategyForTest.messages?.onWin ??
+      "✅ WIN! Hoje: [DATA_HOJE] às [HORA_AGORA] • Assertividade: [PERCENTUAL_ASSERTIVIDADE]";
+
+    const ctx = {
+      game: gameFromId,
+      now: new Date(), // ✅ garante DATA_HOJE/HORA_AGORA
+      stats: {
+        wins: selected?.metrics?.greens ?? 0,
+        losses: selected?.metrics?.reds ?? 0,
+        sg: 0,
+        galeAtual: 0,
+        maxGales: strategyForTest.mgCount ?? 0,
+        ganhosConsecutivos: 0,
+        ganhosConsecutivosGale: 0,
+        ganhosConsecutivosSemGale: 0,
+        gWinsByLevel: { 1: 0, 2: 0 },
+      },
+      current: {
+        strategyName: strategyForTest.name,
+        galeDaEntrada: 0,
+      },
+    };
+
+    try {
+      const text = await renderMessage(template, ctx);
+      alert(text);
+    } catch (e: any) {
+      console.error(e);
+      alert("Falha ao renderizar.");
+    }
+  }
+
+  async function handleSendWinTest() {
+    if (!selected) {
+      alert("Selecione um robô.");
+      return;
+    }
+    if (!strategyForTest) {
+      alert("Crie uma estratégia primeiro.");
+      return;
+    }
+    if (!selected.botToken || !selected.chatId) {
+      alert("Configure Bot Token e Chat ID do robô.");
+      return;
+    }
+
+    const template =
+      strategyForTest.messages?.onWin ??
+      "✅ WIN! Hoje: [DATA_HOJE] às [HORA_AGORA] • Assertividade: [PERCENTUAL_ASSERTIVIDADE]";
+
+    const ctx = {
+      game: gameFromId,
+      now: new Date(), // ✅
+      stats: {
+        wins: selected.metrics?.greens ?? 0,
+        losses: selected.metrics?.reds ?? 0,
+        sg: 0,
+        galeAtual: 0,
+        maxGales: strategyForTest.mgCount ?? 0,
+        ganhosConsecutivos: 0,
+        ganhosConsecutivosGale: 0,
+        ganhosConsecutivosSemGale: 0,
+        gWinsByLevel: { 1: 0, 2: 0 },
+      },
+      current: {
+        strategyName: strategyForTest.name,
+        galeDaEntrada: 0,
+      },
+    };
+
+    try {
+      setSending(true);
+      const text = await renderMessage(template, ctx);
+      await sendViaApi(selected.botToken, selected.chatId, text); // ✅ usa sua API
+      alert("Mensagem enviada!");
+    } catch (e: any) {
+      console.error(e);
+      alert(e?.message || "Falha ao enviar.");
+    } finally {
+      setSending(false);
+    }
   }
 
   const gameLabel = gameFromId === "aviator" ? "Aviator" : "Bac Bo";
@@ -403,15 +526,33 @@ export default function RobotManager({ botId, bot, casa }: Props) {
           <div className="flex items-center justify-between mb-3">
             <h3 className="font-medium">Estratégia</h3>
 
-            <button
-              className="px-3 py-2 rounded-lg bg-blue-600 text-white hover:bg-blue-700"
-              onClick={() => setShowStrategyEditor((v) => !v)}
-            >
-              {showStrategyEditor ? "Ocultar editor" : "+ Nova estratégia"}
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                className="px-3 py-2 rounded-lg border hover:bg-gray-50"
+                onClick={handlePreviewWin}
+                disabled={!strategyForTest}
+                title={strategyForTest ? `Pré-visualizar usando: ${strategyForTest.name}` : "Crie uma estratégia"}
+              >
+                Pré-visualizar WIN
+              </button>
+              <button
+                className="px-3 py-2 rounded-lg border bg-green-600 text-white hover:bg-green-700 disabled:opacity-60"
+                onClick={handleSendWinTest}
+                disabled={!strategyForTest || sending}
+                title={strategyForTest ? `Enviar usando: ${strategyForTest.name}` : "Crie uma estratégia"}
+              >
+                {sending ? "Enviando..." : "Enviar WIN (teste)"}
+              </button>
+
+              <button
+                className="px-3 py-2 rounded-lg bg-blue-600 text-white hover:bg-blue-700"
+                onClick={() => setShowStrategyEditor((v) => !v)}
+              >
+                {showStrategyEditor ? "Ocultar editor" : "+ Nova estratégia"}
+              </button>
+            </div>
           </div>
 
-          {/* ✅ A lista fica sempre visível; o editor abre/fecha via prop */}
           <StrategiesPanel
             key={selected.id}
             bot={gameFromId}
@@ -428,14 +569,14 @@ export default function RobotManager({ botId, bot, casa }: Props) {
               pattern: (s.pattern as Array<string | Color>).map<Color>((c) =>
                 isColor(c) ? c : ("gray" as Color)
               ),
-              messages: s.messages, // ✅ envia as mensagens para o painel
+              messages: s.messages,
             }))}
-            onChange={(next) => setStrategies(next)}  // ✅ salva messages vindo do painel
+            onChange={(next) => setStrategies(next)}
             onDuplicate={duplicateStrategy}
             onDelete={deleteStrategy}
             onToggle={toggleStrategy}
             onSummaryChange={(s) => setActiveStrategies(s.active)}
-            hideEditor={!showStrategyEditor}   // 👈 só o editor se esconde/mostra
+            hideEditor={!showStrategyEditor}
             showCloseButton={true}
             onCloseEditor={() => setShowStrategyEditor(false)}
           />
