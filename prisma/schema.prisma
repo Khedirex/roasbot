@@ -38,3 +38,24 @@ model IngestEvent {
   @@index([game, casa, createdAt])
   @@index([game, casa, ts])
 }
+
+model AviatorSignal {
+  id         Int      @id @default(autoincrement())
+  casa       String
+  rule       String          // ex.: "spike" | "drawdown"
+  value      Float
+  ts         BigInt          // timestamp (ms) do ponto que gerou o sinal
+  payload    Json?
+  status     String          // "pending" | "sent" | "skipped"
+  sentAt     DateTime?
+  createdAt  DateTime @default(now())
+
+  @@index([casa, ts])
+}
+
+model RobotState {
+  id              Int      @id @default(autoincrement())
+  casa            String   @unique
+  lastProcessedTs BigInt   @default(0)   // último ts de ingest processado
+  updatedAt       DateTime @updatedAt
+}
