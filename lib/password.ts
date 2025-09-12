@@ -1,10 +1,12 @@
+import "server-only";
+import { genSaltSync, hashSync, compareSync } from "bcryptjs";
 import bcrypt from "bcryptjs";
 
 export function hashPassword(plain: string) {
-  // salt=10 é suficiente aqui
-  return bcrypt.hash(plain, 10);
+  const salt = genSaltSync(10);
+  return hashSync(plain, salt);
 }
 
 export function verifyPassword(plain: string, hash: string) {
-  return bcrypt.compare(plain, hash);
+  return compareSync(plain, hash);
 }

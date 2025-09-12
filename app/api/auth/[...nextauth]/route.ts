@@ -2,6 +2,8 @@ import NextAuth, { type NextAuthOptions } from "next-auth";
 import Credentials from "next-auth/providers/credentials";
 import { prisma } from "@/lib/db";
 import { verifyPassword } from "@/lib/password";
+export const runtime = "nodejs";
+
 
 // Somente esses e-mails são ADMIN
 const ADMINS = new Set(["suporte@roasbot.online", "marcelinow7@gmail.com"]);
@@ -65,4 +67,3 @@ export const authOptions: NextAuthOptions = {
 
 const handler = NextAuth(authOptions);
 export { handler as GET, handler as POST };
-export const runtime = "nodejs";

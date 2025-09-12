@@ -11,8 +11,11 @@ import StrategyMessagesForm, {
   type StrategyMessages,
 } from "./StrategyMessagesForm";
 
-/** ---- Tipos expostos para o RobotManager ---- */
-export type Color = "green" | "gray" | "black" | "red" | "blue" | "pink";
+/** ---- Tipos expostos para o RobotManager ----
+ * Cores válidas (sem "red", com "white"):
+ * gray | green | black | white | blue | pink
+ */
+export type Color = "green" | "gray" | "black" | "white" | "blue" | "pink";
 
 export type Strategy = {
   id: string;
@@ -23,7 +26,10 @@ export type Strategy = {
   enabled: boolean;
   pattern: Color[];
   winAt: number;
-  /** NOVO: mensagens configuráveis por estratégia */
+  /** Limiares customizados para azul/rosa */
+  blueThreshold?: number; // Azul: vela >= blueThreshold
+  pinkThreshold?: number; // Rosa: vela <= pinkThreshold
+  /** Mensagens configuráveis por estratégia */
   messages?: StrategyMessages;
 };
 
@@ -60,15 +66,15 @@ type Props = {
   onCloseEditor?: () => void;
 };
 
-/** paleta usada pelos slots */
-const COLORS: Color[] = ["green", "gray", "black", "red", "blue", "pink"];
+/** paleta usada pelos slots (ordem do clique) */
+const COLORS: Color[] = ["gray", "green", "black", "white", "blue", "pink"];
 
 function swatch(c: Color) {
   switch (c) {
     case "green": return "#22c55e";
     case "gray":  return "#9ca3af";
     case "black": return "#111827";
-    case "red":   return "#ef4444";
+    case "white": return "#ffffff";
     case "blue":  return "#3b82f6";
     case "pink":  return "#ec4899";
   }
@@ -95,7 +101,8 @@ function emptyDraft(nowName = "Nova estratégia"): Strategy {
     enabled: true,
     pattern: defaultPattern(),
     winAt: 2,
-    // messages não é necessário no rascunho
+    blueThreshold: undefined,
+    pinkThreshold: undefined,
   };
 }
 
@@ -247,6 +254,42 @@ export function StrategiesPanel({
               </div>
             </div>
 
+            {/* Limiares Azul/Rosa */}
+            <div className="grid grid-cols-2 gap-4 w-full md:w-[28rem]">
+              <div>
+                <Label>Azul ≥ (blue)</Label>
+                <Input
+                  type="number"
+                  min={1}
+                  step={0.01}
+                  placeholder="ex.: 3.00"
+                  value={draft.blueThreshold ?? ""}
+                  onChange={(e) =>
+                    setDraft({
+                      ...draft,
+                      blueThreshold: e.target.value === "" ? undefined : Number(e.target.value),
+                    })
+                  }
+                />
+              </div>
+              <div>
+                <Label>Rosa ≤ (pink)</Label>
+                <Input
+                  type="number"
+                  min={1}
+                  step={0.01}
+                  placeholder="ex.: 1.40"
+                  value={draft.pinkThreshold ?? ""}
+                  onChange={(e) =>
+                    setDraft({
+                      ...draft,
+                      pinkThreshold: e.target.value === "" ? undefined : Number(e.target.value),
+                    })
+                  }
+                />
+              </div>
+            </div>
+
             {/* Padrão */}
             <div className="space-y-2">
               <Label>Monte sua estratégia (clique nos slots para alternar a cor)</Label>
@@ -255,10 +298,24 @@ export function StrategiesPanel({
                   <button
                     key={i}
                     className="h-7 w-7 rounded border"
-                    style={{ background: swatch(c) }}
+                    style={{
+                      background: swatch(c),
+                      borderColor: c === "white" ? "#e5e7eb" : "rgba(0,0,0,0.15)",
+                    }}
                     onClick={() => cycleSlot(i)}
+                    title={c}
                   />
                 ))}
+              </div>
+
+              {/* Legenda compacta */}
+              <div className="text-xs text-muted-foreground mt-1 space-x-3">
+                <span>🟩 Verde: ≥ 2x</span>
+                <span>⬛ Preto: &lt; 2x (≠ 1.00x)</span>
+                <span>⬜ Branco: 1.00x</span>
+                <span>🟦 Azul: ≥ custom</span>
+                <span>🩷 Rosa: ≤ custom</span>
+                <span>⬜ Cinza: qualquer</span>
               </div>
             </div>
 
@@ -339,7 +396,11 @@ export function StrategiesPanel({
                   <Button
                     variant="secondary"
                     className="bg-blue-50 hover:bg-blue-100 text-blue-700"
-                    onClick={() => toggleOpenMessages(s.id)}
+                    onClick={() => setOpenMessages(p => {
+                      const n = new Set(p);
+                      n.has(s.id) ? n.delete(s.id) : n.add(s.id);
+                      return n;
+                    })}
                   >
                     {isOpen ? "Ocultar mensagens" : "Adicionar mensagens"}
                   </Button>
@@ -349,7 +410,9 @@ export function StrategiesPanel({
                   <div className="rounded-lg border p-3 bg-gray-50">
                     <StrategyMessagesForm
                       value={s.messages ?? emptyMessages()}
-                      onChange={(msgs) => patchStrategy(s.id, { messages: msgs })}
+                      onChange={(msgs) =>
+                        patchStrategy(s.id, { messages: msgs })
+                      }
                     />
                   </div>
                 )}
@@ -381,6 +444,40 @@ export function StrategiesPanel({
                   </div>
                 </div>
 
+                {/* Limiares Azul/Rosa */}
+                <div className="grid grid-cols-2 gap-4 w-full md:w-[28rem]">
+                  <div>
+                    <Label>Azul ≥ (blue)</Label>
+                    <Input
+                      type="number"
+                      min={1}
+                      step={0.01}
+                      placeholder="ex.: 3.00"
+                      value={s.blueThreshold ?? ""}
+                      onChange={(e) =>
+                        patchStrategy(s.id, {
+                          blueThreshold: e.target.value === "" ? undefined : Number(e.target.value),
+                        })
+                      }
+                    />
+                  </div>
+                  <div>
+                    <Label>Rosa ≤ (pink)</Label>
+                    <Input
+                      type="number"
+                      min={1}
+                      step={0.01}
+                      placeholder="ex.: 1.40"
+                      value={s.pinkThreshold ?? ""}
+                      onChange={(e) =>
+                        patchStrategy(s.id, {
+                          pinkThreshold: e.target.value === "" ? undefined : Number(e.target.value),
+                        })
+                      }
+                    />
+                  </div>
+                </div>
+
                 {/* Padrão */}
                 <div>
                   <Label>Monte sua estratégia (clique nos slots para alternar a cor)</Label>
@@ -389,12 +486,16 @@ export function StrategiesPanel({
                       <button
                         key={i}
                         className="h-6 w-6 rounded border"
-                        style={{ background: swatch(c) }}
+                        style={{
+                          background: swatch(c),
+                          borderColor: c === "white" ? "#e5e7eb" : "rgba(0,0,0,0.15)",
+                        }}
                         onClick={() => {
                           const pattern = [...s.pattern];
                           pattern[i] = nextColor(c);
                           patchStrategy(s.id, { pattern });
                         }}
+                        title={c}
                       />
                     ))}
                   </div>
