@@ -1,6 +1,7 @@
 // app/api/ingest/aviator/[casa]/route.ts
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { renderTemplate } from "@/lib/messageTemplate";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -14,7 +15,7 @@ type Casa = (typeof ALLOWED_CASAS)[number];
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
-  "Access-Control-Allow-Headers": "content-type,authorization,x-api-key",
+  "Access-Control-Allow-Headers": "content-type,authorization,x-api-key,x-requested-with",
 };
 const JSON_HEADERS = {
   "Content-Type": "application/json",
@@ -59,6 +60,36 @@ function parseTs(body: any): number {
   return ts;
 }
 
+/* ================= Helpers de mensagem automática ================= */
+type EventKind = "win" | "loss" | "entry";
+
+const DEFAULT_TPL: Record<EventKind, string> = {
+  win:
+    "✅ WIN! Hoje: [DATA_HOJE] às [HORA_AGORA]\n" +
+    "Wins: [WINS] • Sem gale: [SG]\n" +
+    "Estratégia: [NOME_ESTRATEGIA] [TIPO_GREEN_MINUSCULO]",
+  loss:
+    "❌ LOSS em [DATA_HOJE] [HORA_AGORA]\n" +
+    "Wins: [WINS] | Reds: [LOSSES] • Gale atual: [GALE_ATUAL]",
+  entry:
+    "🎯 Entrada confirmada — [NOME_ESTRATEGIA]\n" +
+    "Agora: [HORA_AGORA] • Máx gales: [MAX_GALES]",
+};
+
+async function sendTelegramDirect(botToken: string, chatId: string, text: string) {
+  const resp = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      chat_id: chatId,
+      text,
+      disable_web_page_preview: true,
+    }),
+  });
+  const data = await resp.json().catch(() => ({}));
+  return { ok: !!data?.ok, data };
+}
+
 /* ======================= POST (ingest) ======================= */
 export async function POST(
   req: Request,
@@ -92,12 +123,56 @@ export async function POST(
       });
     }
 
+    // 1) Grava no banco (comportamento original preservado)
     const saved = await prisma.ingestEvent.create({
       data: { game: "aviator", casa, value, ts },
       select: { id: true, value: true, ts: true, createdAt: true },
     });
 
-    return json(201, { ok: true, saved });
+    // 2) (Opcional) Render + envio para Telegram
+    //    A extensão só precisa mandar esses campos se quiser disparar mensagem:
+    //    { event: "win"|"loss"|"entry", template?: string, stats?: {...},
+    //      strategyName?: string, current?: {...}, telegram: { botToken, chatId } }
+    let sent: { ok: boolean; response?: any; text?: string } | undefined;
+
+    const event: EventKind | "" = (body?.event || "").toString().toLowerCase() as EventKind;
+    const tg = body?.telegram;
+    const wantsSend = !!(tg?.botToken && tg?.chatId) && (event === "win" || event === "loss" || event === "entry");
+
+    if (wantsSend) {
+      // monta contexto mínimo + extras enviados pela extensão
+      const ctxForTpl = {
+        now: new Date(), // DATA_HOJE / HORA_AGORA
+        game: "aviator",
+        current: {
+          strategyName: body?.current?.strategyName ?? body?.strategyName ?? "Estratégia",
+          galeDaEntrada: body?.current?.galeDaEntrada ?? 0,
+        },
+        stats: {
+          wins: body?.stats?.wins ?? 0,
+          losses: body?.stats?.losses ?? 0,
+          sg: body?.stats?.sg ?? 0,
+          galeAtual: body?.stats?.galeAtual ?? 0,
+          maxGales: body?.stats?.maxGales ?? 0,
+          ganhosConsecutivos: body?.stats?.ganhosConsecutivos ?? 0,
+          ganhosConsecutivosGale: body?.stats?.ganhosConsecutivosGale ?? 0,
+          ganhosConsecutivosSemGale: body?.stats?.ganhosConsecutivosSemGale ?? 0,
+          gWinsByLevel: body?.stats?.gWinsByLevel ?? { 1: 0, 2: 0 },
+        },
+        // permite a extensão sobrepor algo específico usado no template
+        ...body?.ctx,
+      };
+
+      const template: string =
+        (typeof body?.template === "string" && body.template.trim()) ? body.template : DEFAULT_TPL[event];
+
+      const text = renderTemplate(template, ctxForTpl);
+      const tgRes = await sendTelegramDirect(tg.botToken, tg.chatId, text);
+
+      sent = { ok: tgRes.ok, response: tgRes.data, text };
+    }
+
+    return json(201, { ok: true, saved, ...(sent ? { sent } : {}) });
   } catch (e: any) {
     console.error("INGEST POST ERROR:", e?.message || e);
     return json(500, { ok: false, error: "db_error", message: String(e?.message ?? e) });
