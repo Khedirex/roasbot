@@ -65,6 +65,23 @@ function readBots(): BotMeta[] {
   return Array.from(found.values());
 }
 
+/** Seed mínimo para quando o storage está vazio (não interfere se já houver dados). */
+const DEFAULT_BOTS: BotMeta[] = [
+  { id: "aviator-1win", game: "aviator", casa: "1win", label: "Aviator @ 1Win" },
+  { id: "aviator-lebull", game: "aviator", casa: "lebull", label: "Aviator @ LeBull" },
+  { id: "bacbo-1win", game: "bacbo", casa: "1win", label: "Bac Bo @ 1Win" },
+];
+
+/** Se não houver nada no storage, grava um básico e devolve; caso contrário, mantém. */
+function ensureBotsRegistry(): BotMeta[] {
+  const list = readBots();
+  if (list.length) return list;
+  try {
+    localStorage.setItem(BOTS_KEY, JSON.stringify(DEFAULT_BOTS));
+  } catch {}
+  return DEFAULT_BOTS;
+}
+
 /** Lê a lista real de robôs para um botId. */
 function readRobots(botId: string): Robot[] {
   try {
@@ -123,7 +140,7 @@ export default function BotsPage() {
   >([]);
 
   useEffect(() => {
-    const list = readBots();
+    const list = ensureBotsRegistry(); // 👈 semeia apenas se estiver vazio
 
     // monta snapshot agrupado apenas com bots que TÊM robôs
     if (!isManager) {

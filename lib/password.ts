@@ -7,6 +7,6 @@ export function hashPassword(plain: string) {
   return hashSync(plain, salt);
 }
 
-export function verifyPassword(plain: string, hash: string) {
-  return compareSync(plain, hash);
+export async function verifyPassword(plain: string, hash: string) {
+  return bcrypt.compare(plain, hash);
 }

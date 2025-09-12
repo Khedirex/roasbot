@@ -1,7 +1,7 @@
 // app/api/auth/[...nextauth]/route.ts
 import NextAuth, { type NextAuthOptions } from "next-auth";
 import Credentials from "next-auth/providers/credentials";
-import { prisma } from "@/lib/prisma";            // 🔧 ajuste aqui
+import { prisma } from "@/lib/prisma";
 import { verifyPassword } from "@/lib/password";
 
 export const runtime = "nodejs";
@@ -12,7 +12,8 @@ const ADMINS = new Set(["suporte@roasbot.online", "marcelinow7@gmail.com"]);
 export const authOptions: NextAuthOptions = {
   secret: process.env.NEXTAUTH_SECRET,
   session: { strategy: "jwt" },
-  pages: { signIn: "/login" },
+  // Se der erro, volta para /login (evita /api/auth/error 404)
+  pages: { signIn: "/login", error: "/login" },
 
   providers: [
     Credentials({
@@ -25,16 +26,17 @@ export const authOptions: NextAuthOptions = {
         try {
           if (!creds?.email || !creds?.password) return null;
 
-          const email = creds.email.toLowerCase().trim();
+          const email = String(creds.email).toLowerCase().trim();
           const user = await prisma.user.findUnique({ where: { email } });
           if (!user) return null;
 
-          const ok = await verifyPassword(creds.password, user.password);
+          const ok = await verifyPassword(String(creds.password), user.password);
           if (!ok) return null;
 
-          return { id: user.id, name: user.name ?? "", email: user.email };
+          // id como string para o JWT/session
+          return { id: String(user.id), name: user.name ?? email, email: user.email };
         } catch (e) {
-          console.error("authorize error:", e);
+          console.error("[auth] authorize error:", e);
           return null;
         }
       },
@@ -44,16 +46,38 @@ export const authOptions: NextAuthOptions = {
   callbacks: {
     async jwt({ token, user }) {
       if (user && (user as any).id) (token as any).userId = (user as any).id;
-      const email = (user?.email ?? token.email ?? "").toLowerCase().trim();
+
+      const email =
+        (user?.email ?? token.email ?? "")
+          .toString()
+          .toLowerCase()
+          .trim();
+
       (token as any).role = ADMINS.has(email) ? "ADMIN" : "USER";
       return token;
     },
 
     async session({ session, token }) {
-      const uid = (token as any).userId ?? token.sub;
+      const uid = (token as any).userId ?? token.sub ?? null;
       if (uid) (session as any).userId = uid;
       if (session.user) (session.user as any).role = (token as any).role ?? "USER";
       return session;
+    },
+
+    // Permite redirects relativos e URLs do Codespaces (*.github.dev)
+    async redirect({ url, baseUrl }) {
+      if (url.startsWith("/")) return `${baseUrl}${url}`;
+      try {
+        const u = new URL(url);
+        const b = new URL(baseUrl);
+        if (
+          u.hostname.endsWith(".github.dev") &&
+          b.hostname.endsWith(".github.dev")
+        ) {
+          return url;
+        }
+      } catch {}
+      return baseUrl;
     },
   },
 };
