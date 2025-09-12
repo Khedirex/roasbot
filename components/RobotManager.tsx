@@ -7,8 +7,8 @@ import {
   type Strategy as PanelStrategy,
   type Color,
 } from "@/app/(app)/bots/aviator/StrategiesPanel";
-// Se tiver mensagens por estratégia, reative o import:
-// import type { StrategyMessages } from "@/app/bots/aviator/StrategyMessagesForm";
+// ✅ importe o tipo das mensagens
+import type { StrategyMessages } from "@/app/(app)/bots/aviator/StrategyMessagesForm";
 
 /** ===== Tipos ===== */
 type Metrics = { jogadas: number; greens: number; reds: number };
@@ -22,7 +22,8 @@ type Strategy = {
   enabled: boolean;
   pattern: string[];
   winAt: number;
-  // messages?: StrategyMessages;
+  /** ✅ mantém as mensagens da estratégia */
+  messages?: StrategyMessages;
 };
 
 type Robot = {
@@ -48,9 +49,7 @@ type BotMeta = { id: string; game: Game; casa: CasaSlug; label: string };
 const BOTS_KEY = "roasbot.bots";
 
 function labelOf(game: Game, casa: CasaSlug) {
-  return `${game === "aviator" ? "Aviator" : "Bac Bo"} @ ${
-    casa === "1win" ? "1Win" : "LeBull"
-  }`;
+  return `${game === "aviator" ? "Aviator" : "Bac Bo"} @ ${casa === "1win" ? "1Win" : "LeBull"}`;
 }
 
 function upsertBotInRegistry(game: Game, casa: CasaSlug) {
@@ -81,7 +80,7 @@ function removeBotFromRegistry(botId: string) {
 const LIST_PREFIX = "roasbot:robots";
 
 export default function RobotManager({ botId, bot, casa }: Props) {
-  // Deriva botId verdadeiro de forma segura
+  // Deriva botId
   const realBotId = useMemo(() => {
     if (botId) return botId;
     if (bot && casa) return `${bot}-${casa}`;
@@ -101,18 +100,15 @@ export default function RobotManager({ botId, bot, casa }: Props) {
     [realBotId]
   );
 
-  // Garante que este par esteja no registro global ao abrir a tela
+  // garante registro
   useEffect(() => {
     upsertBotInRegistry(gameFromId, casaFromId);
   }, [gameFromId, casaFromId]);
 
-  // chave estável e padronizada com a Home
   const storageKey = useMemo(() => `${LIST_PREFIX}:${realBotId}:list`, [realBotId]);
 
   const [robots, setRobots] = useState<Robot[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
-
-  // --- Hidratação: evita sobrescrever com [] antes de ler do storage
   const [hydrated, setHydrated] = useState(false);
 
   const PALETTE = ["green", "gray", "black", "red", "blue", "pink"] as const;
@@ -126,9 +122,10 @@ export default function RobotManager({ botId, bot, casa }: Props) {
   const [enabled, setEnabled] = useState(false);
   const [activeStrategies, setActiveStrategies] = useState<number>(0);
 
+  // só alterna o editor; a lista fica sempre visível
   const [showStrategyEditor, setShowStrategyEditor] = useState(false);
 
-  /* ====== Ler lista de robôs uma vez ao montar / mudar botId ====== */
+  /* ====== Ler lista ====== */
   useEffect(() => {
     try {
       const raw = localStorage.getItem(storageKey);
@@ -143,11 +140,11 @@ export default function RobotManager({ botId, bot, casa }: Props) {
         setSelectedId(null);
       }
     } finally {
-      setHydrated(true); // só depois da leitura inicial
+      setHydrated(true);
     }
   }, [storageKey]);
 
-  /* ====== Persistir a lista somente após hidratar ====== */
+  /* ====== Persistir lista ====== */
   useEffect(() => {
     if (!hydrated) return;
     try {
@@ -155,7 +152,7 @@ export default function RobotManager({ botId, bot, casa }: Props) {
     } catch {}
   }, [hydrated, robots, storageKey]);
 
-  /* ====== Flag ligado/desligado do robô selecionado ====== */
+  /* ====== Flag ligado/desligado ====== */
   useEffect(() => {
     if (!enabledKey) return;
     try {
@@ -197,7 +194,6 @@ export default function RobotManager({ botId, bot, casa }: Props) {
     };
     setRobots((prev) => [newRobot, ...prev]);
     setSelectedId(newRobot.id);
-    // reforça o registro do par atual
     upsertBotInRegistry(gameFromId, casaFromId);
   }
 
@@ -209,7 +205,6 @@ export default function RobotManager({ botId, bot, casa }: Props) {
   function removeRobot(id: string) {
     setRobots((prev) => {
       const next = prev.filter((r) => r.id !== id);
-      // se removeu o último robô deste par, limpa do registro global (opcional)
       if (next.length === 0) removeBotFromRegistry(realBotId);
       return next;
     });
@@ -226,6 +221,7 @@ export default function RobotManager({ botId, bot, casa }: Props) {
 
   /** ===== Estratégias ===== */
   function setStrategies(next: PanelStrategy[]) {
+    // ✅ preserva e salva messages
     const converted: Strategy[] = next.map((s) => ({
       id: s.id,
       name: s.name,
@@ -235,7 +231,7 @@ export default function RobotManager({ botId, bot, casa }: Props) {
       enabled: s.enabled,
       winAt: s.winAt,
       pattern: (s.pattern as string[]) ?? [],
-      // messages: s.messages,
+      messages: s.messages, // ✅ aqui!
     }));
     updateRobot({ strategies: converted });
   }
@@ -382,25 +378,17 @@ export default function RobotManager({ botId, bot, casa }: Props) {
               <h3 className="font-medium mb-2">Configurações do Robô</h3>
               <div className="rounded-lg border p-4">
                 <div className="grid md:grid-cols-3 gap-4">
-                  <Field label="Nome" value={selected.name} onChange={(v) => updateRobot({ name: v })} />
+                  <Field label="Nome" type="text" value={selected.name} onChange={(v) => updateRobot({ name: v })} />
                   <Field label="Início" type="time" value={selected.startHour} onChange={(v) => updateRobot({ startHour: v })} />
                   <Field label="Fim" type="time" value={selected.endHour} onChange={(v) => updateRobot({ endHour: v })} />
                 </div>
 
                 <div className="grid grid-cols-1 gap-4 mt-4">
-                  <Field
-                    label="Bot Token"
-                    value={selected.botToken}
-                    onChange={(v) => updateRobot({ botToken: v })}
-                  />
+                  <Field label="Bot Token" type="text" value={selected.botToken} onChange={(v) => updateRobot({ botToken: v })} />
                 </div>
 
                 <div className="grid md:grid-cols-2 gap-4 mt-4">
-                  <Field
-                    label="Chat ID"
-                    value={selected.chatId}
-                    onChange={(v) => updateRobot({ chatId: v })}
-                  />
+                  <Field label="Chat ID" type="text" value={selected.chatId} onChange={(v) => updateRobot({ chatId: v })} />
                   <div className="hidden md:block" />
                 </div>
               </div>
@@ -414,17 +402,18 @@ export default function RobotManager({ botId, bot, casa }: Props) {
         <div className="rounded-xl border bg-white p-4">
           <div className="flex items-center justify-between mb-3">
             <h3 className="font-medium">Estratégia</h3>
-            {!showStrategyEditor && (
-              <button
-                className="px-3 py-2 rounded-lg bg-blue-600 text-white hover:bg-blue-700"
-                onClick={() => setShowStrategyEditor(true)}
-              >
-                + Nova estratégia
-              </button>
-            )}
+
+            <button
+              className="px-3 py-2 rounded-lg bg-blue-600 text-white hover:bg-blue-700"
+              onClick={() => setShowStrategyEditor((v) => !v)}
+            >
+              {showStrategyEditor ? "Ocultar editor" : "+ Nova estratégia"}
+            </button>
           </div>
 
+          {/* ✅ A lista fica sempre visível; o editor abre/fecha via prop */}
           <StrategiesPanel
+            key={selected.id}
             bot={gameFromId}
             casa={casaFromId}
             robotId={selected.id}
@@ -436,20 +425,18 @@ export default function RobotManager({ botId, bot, casa }: Props) {
               mgCount: s.mgCount,
               enabled: s.enabled,
               winAt: s.winAt,
-              // messages: s.messages,
               pattern: (s.pattern as Array<string | Color>).map<Color>((c) =>
                 isColor(c) ? c : ("gray" as Color)
               ),
+              messages: s.messages, // ✅ envia as mensagens para o painel
             }))}
-            onChange={(next) => {
-              setStrategies(next);
-            }}
+            onChange={(next) => setStrategies(next)}  // ✅ salva messages vindo do painel
             onDuplicate={duplicateStrategy}
             onDelete={deleteStrategy}
             onToggle={toggleStrategy}
             onSummaryChange={(s) => setActiveStrategies(s.active)}
-            hideEditor={!showStrategyEditor}
-            showCloseButton={showStrategyEditor}
+            hideEditor={!showStrategyEditor}   // 👈 só o editor se esconde/mostra
+            showCloseButton={true}
             onCloseEditor={() => setShowStrategyEditor(false)}
           />
         </div>
