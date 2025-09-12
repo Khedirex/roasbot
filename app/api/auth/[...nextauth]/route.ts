@@ -1,11 +1,12 @@
+// app/api/auth/[...nextauth]/route.ts
 import NextAuth, { type NextAuthOptions } from "next-auth";
 import Credentials from "next-auth/providers/credentials";
-import { prisma } from "@/lib/db";
+import { prisma } from "@/lib/prisma";            // 🔧 ajuste aqui
 import { verifyPassword } from "@/lib/password";
+
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
-
-// Somente esses e-mails são ADMIN
 const ADMINS = new Set(["suporte@roasbot.online", "marcelinow7@gmail.com"]);
 
 export const authOptions: NextAuthOptions = {
@@ -32,7 +33,8 @@ export const authOptions: NextAuthOptions = {
           if (!ok) return null;
 
           return { id: user.id, name: user.name ?? "", email: user.email };
-        } catch {
+        } catch (e) {
+          console.error("authorize error:", e);
           return null;
         }
       },
@@ -40,26 +42,17 @@ export const authOptions: NextAuthOptions = {
   ],
 
   callbacks: {
-    // ❌ Não tipar os parâmetros aqui — deixe o NextAuth inferir
     async jwt({ token, user }) {
-      if (user && (user as any).id) {
-        (token as any).userId = (user as any).id;
-      }
-
-      // Define role por allowlist
+      if (user && (user as any).id) (token as any).userId = (user as any).id;
       const email = (user?.email ?? token.email ?? "").toLowerCase().trim();
       (token as any).role = ADMINS.has(email) ? "ADMIN" : "USER";
-
       return token;
     },
 
     async session({ session, token }) {
       const uid = (token as any).userId ?? token.sub;
       if (uid) (session as any).userId = uid;
-
-      if (session.user) {
-        (session.user as any).role = (token as any).role ?? "USER";
-      }
+      if (session.user) (session.user as any).role = (token as any).role ?? "USER";
       return session;
     },
   },
