@@ -93,8 +93,8 @@ export async function middleware(req: NextRequest) {
 
 /** Aplica o middleware em tudo, exceto o que já é público */
 export const config = {
+  // aplica middleware só em rotas de app; exclui api, _next, arquivos estáticos etc.
   matcher: [
-    // Qualquer rota que NÃO comece com os prefixos abaixo
-    "/((?!_next|favicon|icons|images|public|robots\\.txt|sitemap\\.xml|manifest\\.json|apple-touch-icon|api/auth|api/ingest|api/messages|api/send).*)",
+    '/((?!api|_next|static|.*\\..*|favicon.ico|icons|images|public).*)',
   ],
 };
