@@ -128,3 +128,15 @@ model TelegramTarget {
   @@unique([casa, kind], name: "casa_kind")
   @@index([game, casa, updatedAt])
 }
+
+model TelegramLog {
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
+
+  casa      String
+  kind      String
+  chatId    String
+  ok        Boolean
+  payload   Json
+  response  Json
+}
