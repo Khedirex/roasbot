@@ -29,18 +29,20 @@ export function OPTIONS() {
 }
 
 /* ================== Auth via token ==================
-   - Usa INGEST_TOKENS (vírgula/linhas) e/ou INGEST_TOKEN (único)
-   - Aceita: Authorization: Bearer <token> | x-api-key | x-ingest-token | ?token=
-   - Se nada estiver definido, endpoint fica aberto (dev-friendly)
-   - Pode liberar tudo com INGEST_ALLOW_ANY=true (apenas testes)
+   - Usa INGEST_TOKENS (lista) e/ou INGEST_TOKEN (único)
+   - Aceita: Authorization: Bearer | x-api-key | x-ingest-token | ?token=
+   - Se nenhum token estiver definido, endpoint fica aberto (dev-friendly)
+   - INGEST_ALLOW_ANY=true ignora tudo (apenas para testes)
 ===================================================== */
 function getAllowedTokens(): string[] {
-  const single = (process.env.INGEST_TOKEN ?? "").trim();
-  const multi = (process.env.INGEST_TOKENS ?? "")
-    .split(/[,\n\r]+/)
-    .map((s) => s.trim())
+  const raw = (process.env.INGEST_TOKENS ?? process.env.INGEST_TOKEN ?? "");
+  const tokens = raw
+    .replace(/["'`]/g, "")         // remove aspas soltas
+    .split(/[,\s]+/)               // vírgula, espaço, quebras, tabs
+    .map(s => s.trim())
     .filter(Boolean);
-  return Array.from(new Set([...(single ? [single] : []), ...multi]));
+  return Array.from(new Set(tokens));
+
 }
 
 function extractIncomingToken(req: Request): string | null {
@@ -61,23 +63,22 @@ function extractIncomingToken(req: Request): string | null {
 }
 
 function checkToken(req: Request): boolean {
+  // “modo livre” para debug
   if (process.env.INGEST_ALLOW_ANY === "true") return true;
 
   const allowed = getAllowedTokens();
-  if (process.env.NODE_ENV !== "production") {
-  console.log("[targets/auth] INGEST_ALLOW_ANY:", process.env.INGEST_ALLOW_ANY); // DEBUG
-  console.log("[targets/auth] allowed count:", getAllowedTokens().length); // aberto se não configurado
-  }
-  
+
+  // sem tokens configurados => aberto (como o comentário prometia)
+  if (allowed.length === 0) return true;
+
   const got = extractIncomingToken(req);
   if (!got) return false;
 
+  // logs seguros em dev
   if (process.env.NODE_ENV !== "production") {
     const mask = (s: string) => (s.length > 12 ? `${s.slice(0, 6)}…${s.slice(-6)}` : s);
-    console.log(
-      "[targets/auth] got:", mask(got),
-      "| allowed:", allowed.map(mask).join(", "),
-    );
+    console.log("[targets/auth] allowed:", allowed.map(mask).join(", "));
+    console.log("[targets/auth] got    :", mask(got));
   }
   return allowed.includes(got);
 }
@@ -134,7 +135,7 @@ export async function POST(req: Request) {
 
     const body = await req.json().catch(() => null);
     const casa = String(body?.casa || "").trim().toLowerCase();
-    const kind = String(body?.kind || "").trim().toLowerCase(); // "win" | "loss" | "entry" | etc.
+    const kind = String(body?.kind || "").trim().toLowerCase();
     const botToken = String(body?.botToken || "").trim();
     const chatId = String(body?.chatId || "").trim();
     const active = body?.active !== false; // default: true
@@ -150,7 +151,7 @@ export async function POST(req: Request) {
     // dica útil para grupos/canais
     const groupHint =
       /^-?\d+$/.test(chatId) && !chatId.startsWith("-")
-        ? "Para grupos/canais, o chatId costuma começar com \'-\\'"
+        ? "Para grupos/canais, o chatId costuma começar com '-'."
         : undefined;
 
     const item = await prisma.telegramTarget.upsert({
