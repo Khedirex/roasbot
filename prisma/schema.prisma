@@ -16,7 +16,7 @@ model User {
   id        String   @id @default(cuid())
   name      String?
   email     String   @unique
-  password  String // hash (bcryptjs)
+  password  String   // hash (bcryptjs)
   role      Role     @default(USER)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -26,12 +26,12 @@ model User {
 
 model IngestEvent {
   id        String   @id @default(cuid())
-  game      String // ex: "aviator"
-  casa      String // ex: "1win"
+  game      String   // ex: "aviator"
+  casa      String   // ex: "1win"
   value     Float
-  ts        BigInt // timestamp do evento (epoch ms)
-  ip        String? // opcional, IP de origem
-  userAgent String? // opcional, user-agent
+  ts        BigInt   // timestamp do evento (epoch ms)
+  ip        String?  // opcional, IP de origem
+  userAgent String?  // opcional, user-agent
   createdAt DateTime @default(now()) // momento de inserção
 
   @@index([game, casa, createdAt])
@@ -41,11 +41,11 @@ model IngestEvent {
 model AviatorSignal {
   id        Int       @id @default(autoincrement())
   casa      String
-  rule      String // ex.: "spike" | "drawdown"
+  rule      String    // ex.: "spike" | "drawdown"
   value     Float
-  ts        BigInt // timestamp (ms) do ponto que gerou o sinal
+  ts        BigInt    // timestamp (ms) do ponto que gerou o sinal
   payload   Json?
-  status    String // "pending" | "sent" | "skipped"
+  status    String    // "pending" | "sent" | "skipped"
   sentAt    DateTime?
   createdAt DateTime  @default(now())
 
@@ -61,17 +61,17 @@ model RobotState {
 
 /**
  * =========================
- * NOVOS MODELOS P/ ESTRATÉGIAS
+ * MODELOS P/ ESTRATÉGIAS
  * =========================
  */
 
 model Robot {
   id        String   @id @default(cuid())
-  game      String // "aviator" | "bacbo" (livre p/ agora)
-  casa      String // "1win" | "lebull" | etc.
+  game      String   // "aviator" | "bacbo" (livre p/ agora)
+  casa      String   // "1win" | "lebull" | etc.
   name      String
-  botToken  String? // Telegram Bot token (opcional)
-  chatId    String? // Telegram Chat ID  (opcional)
+  botToken  String?  // Telegram Bot token (opcional)
+  chatId    String?  // Telegram Chat ID  (opcional)
   enabled   Boolean  @default(true)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -83,26 +83,48 @@ model Robot {
 }
 
 model Strategy {
-  id        String  @id @default(cuid())
+  id        String   @id @default(cuid())
   robotId   String
   name      String
-  active    Boolean @default(true)
-  startHour String // "HH:mm"
-  endHour   String // "HH:mm"
+  active    Boolean  @default(true)
+  startHour String   // "HH:mm"
+  endHour   String   // "HH:mm"
 
-  // ⬇️ SQLite não suporta lista de primitivos; use Json
-  pattern Json // ex.: ["gray","green","black","white","blue","pink"]
+  // SQLite não suporta lista de primitivos; use Json
+  pattern Json       // ex.: ["gray","green","black","blue","pink"]
 
-  winAt         Int      @default(1)
-  mgCount       Int      @default(0)
-  blueThreshold Float? // Azul: vela >= blueThreshold
-  pinkThreshold Float? // Rosa: vela <= pinkThreshold
-  messages      Json? // textos configuráveis da StrategyMessagesForm
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  winAt         Int       @default(1)
+  mgCount       Int       @default(0)
+  blueThreshold Float?    // Azul: vela >= blueThreshold
+  pinkThreshold Float?    // Rosa: vela <= pinkThreshold
+  messages      Json?     // textos configuráveis da StrategyMessagesForm
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
 
   robot Robot @relation(fields: [robotId], references: [id], onDelete: Cascade)
 
   @@index([robotId, active])
   @@index([startHour, endHour])
+}
+
+/**
+ * =========================
+ * Destinos p/ Telegram
+ * =========================
+ * Um registro por (casa, kind).
+ */
+model TelegramTarget {
+  id        String   @id @default(cuid())
+  game      String?  // opcional (ex.: "aviator")
+  casa      String   // "1win" | "lebull"
+  kind      String   // "win" | "loss" | "entry" (livre)
+  botToken  String
+  chatId    String
+  active    Boolean  @default(true)
+  templates Json?    // { win?: string, loss?: string, entry?: string }
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([casa, kind], name: "casa_kind")
+  @@index([game, casa, updatedAt])
 }
