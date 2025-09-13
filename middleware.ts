@@ -3,7 +3,7 @@ import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 import { getToken } from "next-auth/jwt";
 
-/** Rotas públicas exatas */
+/** Rotas públicas exatas (páginas) */
 const PUBLIC_PATHS = new Set<string>(["/", "/login", "/register", "/healthz"]);
 
 /** Prefixos públicos (estáticos + APIs abertas) */
@@ -18,17 +18,26 @@ const PUBLIC_PREFIXES = [
   "/sitemap.xml",
   "/manifest.json",
   "/apple-touch-icon",
+
+  // Auth
   "/api/auth",
-  "/api/ingest",     // ingest liberado
-  "/api/messages",   // render de mensagens liberado
-  "/api/send",       // ✅ envia para Telegram liberado (ex.: /api/send/telegram)
+
+  // APIs abertas do projeto
+  "/api/ingest",
+  "/api/messages",
+
+  // ✅ Telegram (mantidos)
+  "/api/telegram/send",
+  "/api/telegram/targets",
+  "/api/ping",
 ];
 
 /** CORS (padrão liberado) para APIs abertas */
 const CORS_HEADERS: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
-  "Access-Control-Allow-Headers": "content-type,authorization,x-api-key,x-requested-with",
+  "Access-Control-Allow-Headers":
+    "content-type,authorization,x-api-key,x-ingest-token,x-requested-with",
   Vary: "Origin",
 };
 
@@ -39,12 +48,17 @@ function isPublicPrefix(pathname: string) {
 export async function middleware(req: NextRequest) {
   const { pathname, search, hash, origin } = req.nextUrl;
 
+  // Log apenas em dev
+  if (process.env.NODE_ENV !== "production") {
+    console.log("[MW] passou", pathname);
+  }
+
   // 0) Pré-flight/CORS das APIs abertas
   if (req.method === "OPTIONS" && isPublicPrefix(pathname)) {
     return new NextResponse(null, { status: 204, headers: CORS_HEADERS });
   }
 
-  // 1) Libera rotas públicas exatas
+  // 1) Libera rotas públicas exatas (páginas)
   if (PUBLIC_PATHS.has(pathname)) {
     if (pathname === "/login") {
       const token = await getToken({ req, secret: process.env.NEXTAUTH_SECRET });
@@ -53,14 +67,10 @@ export async function middleware(req: NextRequest) {
     return NextResponse.next();
   }
 
-  // 2) Libera tudo que bate nos prefixos públicos
+  // 2) Libera tudo que bate nos prefixos públicos (estáticos + APIs abertas)
   if (isPublicPrefix(pathname)) {
     // Para APIs abertas, acrescenta CORS também nas respostas normais (GET/POST)
-    if (
-      pathname.startsWith("/api/ingest") ||
-      pathname.startsWith("/api/messages") ||
-      pathname.startsWith("/api/send")
-    ) {
+    if (pathname.startsWith("/api/")) {
       const res = NextResponse.next();
       Object.entries(CORS_HEADERS).forEach(([k, v]) => res.headers.set(k, v));
       return res;
@@ -68,7 +78,7 @@ export async function middleware(req: NextRequest) {
     return NextResponse.next();
   }
 
-  // 3) Protege o restante
+  // 3) Protege o restante (páginas e APIs que NÃO são públicas)
   const token = await getToken({ req, secret: process.env.NEXTAUTH_SECRET });
 
   // 3a) APIs protegidas → 401 JSON
@@ -91,10 +101,12 @@ export async function middleware(req: NextRequest) {
   return NextResponse.next();
 }
 
-/** Aplica o middleware em tudo, exceto o que já é público */
+/**
+ * ⚠️ MUITO IMPORTANTE:
+ * - O matcher abaixo faz o middleware rodar APENAS em páginas.
+ * - NÃO intercepta /api/** nem estáticos, então suas APIs (incluindo /api/telegram/send)
+ *   não passam mais pelo middleware e usam somente a auth por token do próprio endpoint.
+ */
 export const config = {
-  // aplica middleware só em rotas de app; exclui api, _next, arquivos estáticos etc.
-  matcher: [
-    '/((?!api|_next|static|.*\\..*|favicon.ico|icons|images|public).*)',
-  ],
+  matcher: ["/((?!api|_next|static|.*\\..*|favicon.ico|icons|images|public).*)"],
 };

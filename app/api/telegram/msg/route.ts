@@ -1,3 +1,4 @@
+console.log("[SEND] entrou")
 // app/api/telegram/send/route.ts
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
@@ -25,6 +26,13 @@ const json = (status: number, data: unknown) =>
 
 export function OPTIONS() {
   return new NextResponse(null, { status: 204, headers: CORS_HEADERS });
+}
+
+export function GET() {
+  return new Response(JSON.stringify({ ok: true, route: "telegram/send" }), {
+    status: 200,
+    headers: { "Content-Type": "application/json" },
+  });
 }
 
 /* ============ Auth por token (mesma lógica do /targets) ============ */
