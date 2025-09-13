@@ -4,7 +4,7 @@ import type { NextRequest } from "next/server";
 import { getToken } from "next-auth/jwt";
 
 /** Rotas públicas exatas (páginas) */
-const PUBLIC_PATHS = new Set<string>(["/", "/login", "/register", "/healthz"]);
+const PUBLIC_PATHS = new Set<string>(["/", "/login", "/register", "/healthz", "/api/ping",]);
 
 /** Prefixos públicos (estáticos + APIs abertas) */
 const PUBLIC_PREFIXES = [
@@ -30,6 +30,7 @@ const PUBLIC_PREFIXES = [
   "/api/telegram/send",
   "/api/telegram/targets",
   "/api/ping",
+  "/api/healthz",
 ];
 
 /** CORS (padrão liberado) para APIs abertas */
@@ -108,5 +109,7 @@ export async function middleware(req: NextRequest) {
  *   não passam mais pelo middleware e usam somente a auth por token do próprio endpoint.
  */
 export const config = {
-  matcher: ["/((?!api|_next|static|.*\\..*|favicon.ico|icons|images|public).*)"],
+  matcher: [
+    "/((?!api|_next|static|.*\\..*|favicon.ico).*)",
+  ],
 };

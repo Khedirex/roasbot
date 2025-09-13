@@ -1,4 +1,4 @@
-console.log("[SEND] entrou")
+console.log("[SEND] entrou");
 // app/api/telegram/send/route.ts
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
@@ -31,7 +31,7 @@ export function OPTIONS() {
 export function GET() {
   return new Response(JSON.stringify({ ok: true, route: "telegram/send" }), {
     status: 200,
-    headers: { "Content-Type": "application/json" },
+    headers: { ...JSON_HEADERS },
   });
 }
 
@@ -139,17 +139,38 @@ export async function POST(req: Request) {
       return json(400, { ok: false, error: "missing_params", need: "casa, kind, text" });
     }
 
-    const target = await checkTarget(casa, kind);
-
+    // ➜ BYPASS DRY: não exige target ativo
     if (dry) {
-      // Apenas simula (útil para testes)
+      const loose = await prisma.telegramTarget.findUnique({
+        where: { casa_kind: { casa, kind } },
+      }).catch(() => null);
+
+      // log de dry (ignora falha)
+      try {
+        await prisma.telegramLog.create({
+          data: {
+            casa,
+            kind,
+            chatId: loose?.chatId ?? "",
+            ok: true,
+            payload: { text, parseMode, disablePreview, dry: true },
+            response: { dry: true, note: loose ? (loose.active ? "preview_with_active_target" : "preview_with_inactive_target") : "preview_without_target" },
+          },
+        });
+      } catch {}
+
       return json(200, {
         ok: true,
         dry: true,
-        target: { chatId: target.chatId, casa: target.casa, kind: target.kind },
+        target: loose
+          ? { chatId: loose.chatId, casa: loose.casa, kind: loose.kind, active: !!loose.active }
+          : null,
         payload: { text, parseMode, disablePreview },
       });
     }
+
+    // Envio real: agora sim exige target ATIVO
+    const target = await checkTarget(casa, kind);
 
     const result = await sendTelegram({
       botToken: target.botToken,
