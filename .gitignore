@@ -60,3 +60,4 @@ roasbot.zip
 # large artifacts
 *.zip
 roasbot.zip
+.env.local
