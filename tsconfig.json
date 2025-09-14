@@ -37,6 +37,8 @@
     "app/api/telegram/targets"
   ],
   "exclude": [
-    "node_modules"
+    "node_modules",
+    "roasbot/roasbot-main/**",
+    ".next"
   ]
 }

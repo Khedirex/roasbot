@@ -1,0 +1,11 @@
+app/bots/BotsClient.tsx
+app/bots/aviator/1win/page.tsx
+app/hooks/usePersistedState.tsx
+components/RobotManager.tsx
+components/bots/aviator/StatusCard.tsx
+components/bots/aviator/StrategyForm.tsx
+roasbot-main/app/bots/aviator/1win/page.tsx
+roasbot-main/components/RobotManager.tsx
+roasbot-main/components/bots/aviator/StatusCard.tsx
+roasbot-main/components/bots/aviator/StrategyForm.tsx
+tsconfig.json

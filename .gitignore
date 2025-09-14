@@ -61,3 +61,8 @@ roasbot.zip
 *.zip
 roasbot.zip
 .env.local
+
+# legacy duplicates
+roasbot/
+roasbot-main/
+*.tgz

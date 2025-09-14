@@ -1,16 +1,13 @@
-import { dirname } from "path";
-import { fileURLToPath } from "url";
-import { FlatCompat } from "@eslint/eslintrc";
+// eslint.config.js
+import next from "eslint-config-next";
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
-
-const compat = new FlatCompat({
-  baseDirectory: __dirname,
-});
-
-const eslintConfig = [
-  ...compat.extends("next/core-web-vitals", "next/typescript"),
+/**
+ * Flat Config para Next.js + TypeScript
+ * - Ignora artefatos gerados e caches
+ * - Usa as regras oficiais do Next (inclui TS)
+ */
+export default [
+  // Ignorar pastas/arquivos gerados
   {
     ignores: [
       "node_modules/**",
@@ -18,8 +15,10 @@ const eslintConfig = [
       "out/**",
       "build/**",
       "next-env.d.ts",
+      "lib/generated/**", // <- Prisma/wasm gerado
     ],
   },
-];
 
-export default eslintConfig;
+  // Regras oficiais do Next (core-web-vitals + TS)
+  ...next,
+];

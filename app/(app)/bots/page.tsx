@@ -1,6 +1,7 @@
 // app/bots/page.tsx
 "use client";
 
+import { Suspense } from "react";
 import { useEffect, useMemo, useState } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import RobotManager from "@/components/RobotManager";
@@ -108,8 +109,8 @@ function timeShort(iso?: string) {
   return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
 
-/* ================= Página ================= */
-export default function BotsPage() {
+/* ================= Página (INNER) ================= */
+function BotsPageInner() {
   const search = useSearchParams();
   const router = useRouter();
 
@@ -301,7 +302,7 @@ export default function BotsPage() {
 
           {/* ====== DASHBOARD POR JOGO -> CASA ====== */}
           <div className="space-y-6">
-            {/* KPIs gerais (com cor) — removido “Bots no registro” */}
+            {/* KPIs gerais */}
             <div className="grid gap-4 md:grid-cols-5">
               <Kpi color="bg-emerald-600" label="Ativos" value={totalsOverall.enabled} />
               <Kpi color="bg-slate-600" label="Desligados" value={totalsOverall.disabled} />
@@ -434,6 +435,15 @@ export default function BotsPage() {
         </>
       )}
     </section>
+  );
+}
+
+/* ================= Wrapper com Suspense (correção mínima) ================= */
+export default function Page() {
+  return (
+    <Suspense fallback={null}>
+      <BotsPageInner />
+    </Suspense>
   );
 }
 

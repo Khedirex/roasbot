@@ -1,36 +1,33 @@
 // lib/prisma.ts
-import { PrismaClient, type Prisma } from "@prisma/client";
-
-const prismaLogLevels: Prisma.LogLevel[] =
-  process.env.PRISMA_LOG_QUERIES === "1"
-    ? ["query", "info", "warn", "error"]
-    : ["warn", "error"];
+import { PrismaClient } from "@prisma/client";
 
 declare global {
   // eslint-disable-next-line no-var
-  var prisma: PrismaClient | undefined;
+  var __prisma__: PrismaClient | undefined;
 }
 
-/** Singleton do Prisma */
-export const prisma =
-  globalThis.prisma ??
-  new PrismaClient({
-    log: prismaLogLevels,
-    datasources: {
-      db: { url: process.env.DATABASE_URL },
-    },
-  });
+export const prisma: PrismaClient =
+  global.__prisma__ ?? new PrismaClient({ log: ["warn", "error"] });
 
 if (process.env.NODE_ENV !== "production") {
-  globalThis.prisma = prisma;
+  global.__prisma__ = prisma;
 }
 
-/** Opcional: garantir conexão antecipada */
-export async function ensureDb() {
+function getErrorMessage(err: unknown): string {
+  if (err instanceof Error) return err.message;
+  try {
+    return typeof err === "string" ? err : JSON.stringify(err);
+  } catch {
+    return "Unknown error";
+  }
+}
+
+/** Opcional: chame isso no boot para validar a conexão */
+export async function ensurePrisma() {
   try {
     await prisma.$connect();
-  } catch (err) {
-    console.error("Prisma connect error:", (err as any)?.message || err);
+  } catch (err: unknown) {
+    console.error("Prisma connect error:", getErrorMessage(err), err);
   }
   return prisma;
 }

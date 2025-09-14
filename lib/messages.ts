@@ -1,4 +1,4 @@
-async function renderMessage(template: string, ctx: any) {
+async function renderMessage(template: string, ctx: unknown) {
   const res = await fetch("/api/messages/render", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
