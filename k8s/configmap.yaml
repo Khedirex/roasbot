@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: roasbot-config
+data:
+  # Porta que o Next escuta dentro do container
+  PORT: "3000"
+  NODE_ENV: "production"
+
+  # (opcional) URL pública da sua app
+  # APP_URL: "https://sua-app.example.com"
+
+  # (opcional) outras variáveis NÃO sensíveis que você queira versionar
+  # NEXT_RUNTIME: "nodejs"

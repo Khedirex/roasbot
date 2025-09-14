@@ -1,0 +1,50 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: roasbot
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: roasbot
+  template:
+    metadata:
+      labels:
+        app: roasbot
+    spec:
+      containers:
+        - name: web
+          image: your-registry/roasbot:latest   # ajuste para sua imagem
+          ports:
+            - containerPort: 3000
+          envFrom:
+            - configMapRef:
+                name: roasbot-config
+            - secretRef:
+                name: roasbot-secrets
+          # Readiness: checa app + DB (503 se DB falhar)
+          readinessProbe:
+            httpGet:
+              path: /api/healthz?deep=db
+              port: 3000
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 3
+          # Liveness: checa app “shallow”
+          livenessProbe:
+            httpGet:
+              path: /api/healthz
+              port: 3000
+            initialDelaySeconds: 20
+            periodSeconds: 15
+            timeoutSeconds: 2
+            failureThreshold: 3
+          # (opcional) limites de recursos
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"

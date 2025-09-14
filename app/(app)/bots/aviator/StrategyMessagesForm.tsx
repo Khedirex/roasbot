@@ -34,16 +34,28 @@ type Props = {
   onSave?: (current: StrategyMessages) => void;
   /** se retornar mensagens, usa; se não, zera */
   onReset?: () => StrategyMessages | void;
+  /** limite de caracteres por campo (default 500) */
+  maxLengthPerField?: number;
 };
+
+function deepEqual(a: unknown, b: unknown) {
+  try {
+    return JSON.stringify(a) === JSON.stringify(b);
+  } catch {
+    return a === b;
+  }
+}
 
 /** Textarea que ignora bloqueios de pointer-events do pai */
 function TA({
+  id,
   value,
   onChange,
   placeholder,
   readOnly = false,
   maxLength = 500,
 }: {
+  id: string;
   value: string;
   onChange: (v: string) => void;
   placeholder?: string;
@@ -54,8 +66,9 @@ function TA({
   return (
     <div style={{ pointerEvents: "auto" }}>
       <textarea
+        id={id}
         value={value}
-        onChange={(e) => onChange(e.target.value)}
+        onChange={(e) => onChange(e.target.value ?? "")}
         placeholder={placeholder}
         maxLength={maxLength}
         readOnly={readOnly}
@@ -67,7 +80,9 @@ function TA({
           readOnly ? "bg-gray-50 text-gray-600" : "bg-white",
         ].join(" ")}
       />
-      <div className="mt-1 text-xs text-gray-500">{len}/{maxLength}</div>
+      <div className="mt-1 text-xs text-gray-500">
+        {len}/{maxLength}
+      </div>
     </div>
   );
 }
@@ -76,36 +91,38 @@ function TA({
  * Formulário de mensagens por estratégia.
  * Resiliente: mantém estado local espelho + propaga onChange.
  */
-export default function StrategyMessagesForm({
+function StrategyMessagesForm({
   value,
   onChange,
   readOnly = false,
   showActions = false,
   onSave,
   onReset,
+  maxLengthPerField = 500,
 }: Props) {
   // ---- estado local espelho (mostra digitação mesmo se o pai não atualizar) ----
   const [local, setLocal] = React.useState<StrategyMessages>(value);
 
-  // sincroniza quando o pai mudar (deep compare leve)
+  // sincroniza quando o pai mudar (deep compare, sem loop)
   React.useEffect(() => {
-    const a = JSON.stringify(local);
-    const b = JSON.stringify(value);
-    if (a !== b) setLocal(value);
+    if (!deepEqual(local, value)) setLocal(value);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [JSON.stringify(value)]);
+  }, [value]);
 
   function patch<K extends keyof StrategyMessages>(key: K, v: StrategyMessages[K]) {
     setLocal((prev) => {
-      const next = { ...prev, [key]: v };
-      // propaga para o pai; se ele ignorar, o local ainda mantém o que o usuário digitou
-      try { onChange(next); } catch {}
+      const next = { ...prev, [key]: v ?? "" };
+      try {
+        onChange(next);
+      } catch {
+        /* no-op: mantém local mesmo se o pai falhar */
+      }
       return next;
     });
   }
 
   function handleReset() {
-    const next = onReset ? onReset() || emptyMessages() : emptyMessages();
+    const next = (onReset ? onReset() : undefined) || emptyMessages();
     setLocal(next);
     onChange(next);
   }
@@ -113,70 +130,80 @@ export default function StrategyMessagesForm({
   return (
     <div
       className="space-y-4"
-      // força clique/digitação mesmo se um ancestral tiver pointer-events:none
       style={{ pointerEvents: "auto" }}
-      // e evita que overlays de grupo “capturem” o evento
       onPointerDownCapture={(e) => e.stopPropagation()}
     >
-      {/* grid 2 colunas em telas médias, 1 coluna no mobile */}
+      {/* grid 2 colunas em telas médias, 1 no mobile */}
       <div className="grid gap-4 md:grid-cols-2">
         <div>
-          <Label>Mensagem (possibilidade de entrada)</Label>
+          <Label htmlFor="msg-opportunity">Mensagem (possibilidade de entrada)</Label>
           <TA
+            id="msg-opportunity"
             value={local.onOpportunity}
             onChange={(v) => patch("onOpportunity", v)}
             placeholder="Ex.: Possível entrada em breve. Aguardando confirmação…"
             readOnly={readOnly}
+            maxLength={maxLengthPerField}
           />
         </div>
 
         <div>
-          <Label>Mensagem (não houve oportunidade)</Label>
+          <Label htmlFor="msg-noop">Mensagem (não houve oportunidade)</Label>
           <TA
+            id="msg-noop"
             value={local.onNoOpportunity}
             onChange={(v) => patch("onNoOpportunity", v)}
             placeholder="Ex.: Não houve oportunidade segura nesta janela."
             readOnly={readOnly}
+            maxLength={maxLengthPerField}
           />
         </div>
 
         <div>
-          <Label>Mensagem (espelhar a estratégia)</Label>
+          <Label htmlFor="msg-mirror">Mensagem (espelhar a estratégia)</Label>
           <TA
+            id="msg-mirror"
             value={local.onMirror}
             onChange={(v) => patch("onMirror", v)}
             placeholder="Ex.: Espelhando a estratégia agora…"
             readOnly={readOnly}
+            maxLength={maxLengthPerField}
           />
         </div>
 
         <div>
-          <Label>Mensagem (WIN)</Label>
+          <Label htmlFor="msg-win">Mensagem (WIN)</Label>
           <TA
+            id="msg-win"
             value={local.onWin}
             onChange={(v) => patch("onWin", v)}
             placeholder="Ex.: ✅ WIN! Seguimos para a próxima."
             readOnly={readOnly}
+            maxLength={maxLengthPerField}
           />
         </div>
 
         <div>
-          <Label>Mensagem (RED)</Label>
+          <Label htmlFor="msg-red">Mensagem (RED)</Label>
           <TA
+            id="msg-red"
             value={local.onRed}
             onChange={(v) => patch("onRed", v)}
             placeholder="Ex.: ❌ RED nessa. Avaliando próxima oportunidade."
             readOnly={readOnly}
+            maxLength={maxLengthPerField}
           />
         </div>
 
         <div>
-          <Label>Mensagem (usar martingale)</Label>
+          <Label htmlFor="msg-mg">Mensagem (usar martingale)</Label>
           <TA
+            id="msg-mg"
             value={local.onMartingale}
             onChange={(v) => patch("onMartingale", v)}
             placeholder="Ex.: Aplicando martingale conforme configuração."
             readOnly={readOnly}
+            maxLength={maxLengthPerField}
           />
         </div>
       </div>
@@ -197,3 +224,6 @@ export default function StrategyMessagesForm({
     </div>
   );
 }
+
+export { StrategyMessagesForm };
+export default StrategyMessagesForm;

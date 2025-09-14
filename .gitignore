@@ -52,3 +52,7 @@ prisma/.env
 
 # Allow env template
 !.env.example
+
+# large artifacts
+*.zip
+roasbot.zip

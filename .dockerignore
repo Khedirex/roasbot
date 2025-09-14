@@ -1,0 +1,21 @@
+node_modules
+.next
+out
+dist
+.git
+*.log
+.DS_Store
+.vscode
+.idea
+coverage
+.cache
+
+# extras úteis
+**/*.tsbuildinfo
+**/*.map
+npm-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+prisma/dev.db*
+.env*
+.github

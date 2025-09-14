@@ -21,7 +21,7 @@ export type Strategy = {
   id: string;
   name: string;
   startHour: string; // "HH:mm"
-  endHour: string;   // "HH:mm"
+  endHour: string; // "HH:mm"
   mgCount: number;
   enabled: boolean;
   pattern: Color[];
@@ -66,17 +66,31 @@ type Props = {
   onCloseEditor?: () => void;
 };
 
+/** Util: ID seguro em client */
+function safeRandomId() {
+  const c = (globalThis as any)?.crypto;
+  if (c?.randomUUID) return c.randomUUID();
+  // Fallback simples
+  return `stg_${Math.random().toString(36).slice(2)}_${Date.now().toString(36)}`;
+}
+
 /** paleta usada pelos slots (ordem do clique) */
 const COLORS: Color[] = ["gray", "green", "black", "white", "blue", "pink"];
 
 function swatch(c: Color) {
   switch (c) {
-    case "green": return "#22c55e";
-    case "gray":  return "#9ca3af";
-    case "black": return "#111827";
-    case "white": return "#ffffff";
-    case "blue":  return "#3b82f6";
-    case "pink":  return "#ec4899";
+    case "green":
+      return "#22c55e";
+    case "gray":
+      return "#9ca3af";
+    case "black":
+      return "#111827";
+    case "white":
+      return "#ffffff";
+    case "blue":
+      return "#3b82f6";
+    case "pink":
+      return "#ec4899";
   }
 }
 
@@ -93,7 +107,7 @@ function defaultPattern(len = 12): Color[] {
 // Nome padrão agora é "Nova estratégia"
 function emptyDraft(nowName = "Nova estratégia"): Strategy {
   return {
-    id: crypto.randomUUID(),
+    id: safeRandomId(),
     name: nowName,
     startHour: "09:00",
     endHour: "18:00",
@@ -107,7 +121,7 @@ function emptyDraft(nowName = "Nova estratégia"): Strategy {
 }
 
 /** ============================== */
-export function StrategiesPanel({
+function StrategiesPanel({
   bot,
   casa,
   robotId,
@@ -134,9 +148,11 @@ export function StrategiesPanel({
     setDraft(emptyDraft("Nova estratégia"));
   }, [clearSignal]);
 
+  const safeList = strategies ?? [];
+
   const enabledCount = useMemo(
-    () => strategies.filter((s) => s.enabled).length,
-    [strategies]
+    () => safeList.filter((s) => s.enabled).length,
+    [safeList]
   );
 
   useEffect(() => {
@@ -156,35 +172,26 @@ export function StrategiesPanel({
 
   // Botão "Limpar" -> zera o formulário e DEIXA O NOME EM BRANCO
   function handleClear() {
-    setDraft(emptyDraft(""));     // nome vazio
-    onCreate?.();                 // opcional: notifica o pai
+    setDraft(emptyDraft("")); // nome vazio
+    onCreate?.(); // opcional: notifica o pai
   }
 
   // "Criar" -> adiciona o draft na lista e depois limpa (nome em branco)
   function createFromDraft() {
-    if (!draft.name?.trim()) {
+    const name = draft.name?.trim();
+    if (!name) {
       alert("Dê um nome para a estratégia.");
       return;
     }
-    const toCreate: Strategy = { ...draft, id: crypto.randomUUID() };
-    const nextList = [...strategies, toCreate];
-    onChange(nextList);          // pai persiste
-    setDraft(emptyDraft(""));    // nome vazio após criar
-  }
-
-  function toggleOpenMessages(id: string) {
-    setOpenMessages(prev => {
-      const next = new Set(prev);
-      next.has(id) ? next.delete(id) : next.add(id);
-      return next;
-    });
+    const toCreate: Strategy = { ...draft, id: safeRandomId(), name };
+    const nextList = [...safeList, toCreate];
+    onChange(nextList); // pai persiste
+    setDraft(emptyDraft("")); // nome vazio após criar
   }
 
   /** helper para atualizar um item específico da lista */
   function patchStrategy(id: string, patch: Partial<Strategy>) {
-    onChange(
-      strategies.map((x) => (x.id === id ? { ...x, ...patch } : x))
-    );
+    onChange(safeList.map((x) => (x.id === id ? { ...x, ...patch } : x)));
   }
 
   return (
@@ -245,13 +252,13 @@ export function StrategiesPanel({
                   }
                 />
               </div>
-              <div className="flex items-center gap-3">
+                <div className="flex items-center gap-3">
                 <span className="text-sm text-muted-foreground">Ativa</span>
                 <Switch
                   checked={draft.enabled}
-                  onCheckedChange={(v) => setDraft({ ...draft, enabled: v })}
+                  onCheckedChange={(v: boolean) => setDraft({ ...draft, enabled: v })}
                 />
-              </div>
+                </div>
             </div>
 
             {/* Limiares Azul/Rosa */}
@@ -264,12 +271,13 @@ export function StrategiesPanel({
                   step={0.01}
                   placeholder="ex.: 3.00"
                   value={draft.blueThreshold ?? ""}
-                  onChange={(e) =>
+                  onChange={(e) => {
+                    const raw = e.target.value;
                     setDraft({
                       ...draft,
-                      blueThreshold: e.target.value === "" ? undefined : Number(e.target.value),
-                    })
-                  }
+                      blueThreshold: raw === "" ? undefined : Number(raw),
+                    });
+                  }}
                 />
               </div>
               <div>
@@ -280,12 +288,13 @@ export function StrategiesPanel({
                   step={0.01}
                   placeholder="ex.: 1.40"
                   value={draft.pinkThreshold ?? ""}
-                  onChange={(e) =>
+                  onChange={(e) => {
+                    const raw = e.target.value;
                     setDraft({
                       ...draft,
-                      pinkThreshold: e.target.value === "" ? undefined : Number(e.target.value),
-                    })
-                  }
+                      pinkThreshold: raw === "" ? undefined : Number(raw),
+                    });
+                  }}
                 />
               </div>
             </div>
@@ -304,6 +313,7 @@ export function StrategiesPanel({
                     }}
                     onClick={() => cycleSlot(i)}
                     title={c}
+                    aria-label={`Slot ${i + 1}: ${c}`}
                   />
                 ))}
               </div>
@@ -313,8 +323,8 @@ export function StrategiesPanel({
                 <span>🟩 Verde: ≥ 2x</span>
                 <span>⬛ Preto: &lt; 2x (≠ 1.00x)</span>
                 <span>⬜ Branco: 1.00x</span>
-                <span>🟦 Azul: ≥ custom</span>
-                <span>🩷 Rosa: ≤ custom</span>
+                <span>🟦 Azul: ≥ limite</span>
+                <span>🩷 Rosa: ≤ limite</span>
                 <span>⬜ Cinza: qualquer</span>
               </div>
             </div>
@@ -357,30 +367,29 @@ export function StrategiesPanel({
       {/* Botão “Fechar criação” imediatamente ANTES da lista */}
       {!hideEditor && showCloseButton && (
         <div className="flex justify-end -mt-4">
-          <button
-            className="px-3 py-2 rounded-lg border hover:bg-gray-50"
-            onClick={onCloseEditor}
-          >
+          <Button variant="outline" onClick={onCloseEditor}>
             Fechar criação
-          </button>
+          </Button>
         </div>
       )}
 
       {/* ===== Lista existente (uma abaixo da outra) ===== */}
       <div className="space-y-4">
-        {strategies.map((s) => {
+        {safeList.map((s) => {
           const isOpen = openMessages.has(s.id);
 
           return (
             <Card key={s.id}>
               <CardHeader className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
-                <CardTitle className="flex items-center gap-2">{s.name}</CardTitle>
+                <CardTitle className="flex items-center gap-2">
+                  {s.name}
+                </CardTitle>
                 <div className="flex items-center gap-3">
                   <span className="text-sm text-muted-foreground">Ativa</span>
-                  <Switch
-                    checked={s.enabled}
-                    onCheckedChange={(v) => onToggle(s.id, v)}
-                  />
+                    <Switch
+                    checked={!!s.enabled}
+                    onCheckedChange={(v: boolean) => onToggle(s.id, v)}
+                    />
                   <Button variant="secondary" onClick={() => onDuplicate(s.id)}>
                     Duplicar
                   </Button>
@@ -396,11 +405,13 @@ export function StrategiesPanel({
                   <Button
                     variant="secondary"
                     className="bg-blue-50 hover:bg-blue-100 text-blue-700"
-                    onClick={() => setOpenMessages(p => {
-                      const n = new Set(p);
-                      n.has(s.id) ? n.delete(s.id) : n.add(s.id);
-                      return n;
-                    })}
+                    onClick={() =>
+                      setOpenMessages((prev) => {
+                        const next = new Set(prev);
+                        next.has(s.id) ? next.delete(s.id) : next.add(s.id);
+                        return next;
+                      })
+                    }
                   >
                     {isOpen ? "Ocultar mensagens" : "Adicionar mensagens"}
                   </Button>
@@ -410,9 +421,7 @@ export function StrategiesPanel({
                   <div className="rounded-lg border p-3 bg-gray-50">
                     <StrategyMessagesForm
                       value={s.messages ?? emptyMessages()}
-                      onChange={(msgs) =>
-                        patchStrategy(s.id, { messages: msgs })
-                      }
+                      onChange={(msgs) => patchStrategy(s.id, { messages: msgs })}
                     />
                   </div>
                 )}
@@ -456,7 +465,8 @@ export function StrategiesPanel({
                       value={s.blueThreshold ?? ""}
                       onChange={(e) =>
                         patchStrategy(s.id, {
-                          blueThreshold: e.target.value === "" ? undefined : Number(e.target.value),
+                          blueThreshold:
+                            e.target.value === "" ? undefined : Number(e.target.value),
                         })
                       }
                     />
@@ -471,7 +481,8 @@ export function StrategiesPanel({
                       value={s.pinkThreshold ?? ""}
                       onChange={(e) =>
                         patchStrategy(s.id, {
-                          pinkThreshold: e.target.value === "" ? undefined : Number(e.target.value),
+                          pinkThreshold:
+                            e.target.value === "" ? undefined : Number(e.target.value),
                         })
                       }
                     />
@@ -496,6 +507,7 @@ export function StrategiesPanel({
                           patchStrategy(s.id, { pattern });
                         }}
                         title={c}
+                        aria-label={`Slot ${i + 1}: ${c}`}
                       />
                     ))}
                   </div>
@@ -536,3 +548,6 @@ export function StrategiesPanel({
     </div>
   );
 }
+
+export { StrategiesPanel };
+export default StrategiesPanel;

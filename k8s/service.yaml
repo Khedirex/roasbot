@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: roasbot
+spec:
+  selector:
+    app: roasbot
+  ports:
+    - name: http
+      port: 80          # porta dentro do cluster
+      targetPort: 3000  # porta do container (PORT)
+  type: ClusterIP       # mude para LoadBalancer se quiser IP público direto

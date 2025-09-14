@@ -1,19 +1,24 @@
-// app/api/auth/[...nextauth]/route.ts
-import NextAuth, { type NextAuthOptions } from "next-auth";
+// lib/auth.ts
+import { type NextAuthOptions, getServerSession } from "next-auth";
 import Credentials from "next-auth/providers/credentials";
 import { prisma } from "@/lib/prisma";
 import { verifyPassword } from "@/lib/password";
 
-export const runtime = "nodejs";
-export const dynamic = "force-dynamic";
+export const ADMINS = new Set<string>([
+  "suporte@roasbot.online",
+  "marcelinow7@gmail.com",
+]);
 
-const ADMINS = new Set(["suporte@roasbot.online", "marcelinow7@gmail.com"]);
+export type AppRole = "ADMIN" | "USER";
 
-// ⬇️ Não exporte authOptions a partir da rota
-const authOptions: NextAuthOptions = {
+export function roleFromEmail(email?: string | null): AppRole {
+  const e = (email ?? "").toLowerCase().trim();
+  return ADMINS.has(e) ? "ADMIN" : "USER";
+}
+
+export const authOptions: NextAuthOptions = {
   secret: process.env.NEXTAUTH_SECRET,
   session: { strategy: "jwt" },
-  // Se der erro, volta para /login (evita /api/auth/error 404)
   pages: { signIn: "/login", error: "/login" },
 
   providers: [
@@ -34,7 +39,6 @@ const authOptions: NextAuthOptions = {
           const ok = await verifyPassword(String(creds.password), user.password);
           if (!ok) return null;
 
-          // id como string para o JWT/session
           return { id: String(user.id), name: user.name ?? email, email: user.email };
         } catch (e) {
           console.error("[auth] authorize error:", e);
@@ -64,7 +68,7 @@ const authOptions: NextAuthOptions = {
       return session;
     },
 
-    // Permite redirects relativos e URLs do Codespaces (*.github.dev)
+    // permite redirects relativos e *.github.dev (Codespaces)
     async redirect({ url, baseUrl }) {
       if (url.startsWith("/")) return `${baseUrl}${url}`;
       try {
@@ -79,5 +83,7 @@ const authOptions: NextAuthOptions = {
   },
 };
 
-const handler = NextAuth(authOptions);
-export { handler as GET, handler as POST };
+// helper para Server Components / ações server
+export function getServerAuthSession() {
+  return getServerSession(authOptions);
+}
