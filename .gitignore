@@ -66,3 +66,8 @@ roasbot.zip
 roasbot/
 roasbot-main/
 *.tgz
+
+# legacy duplicates
+roasbot/
+roasbot-main/
+*.tgz
