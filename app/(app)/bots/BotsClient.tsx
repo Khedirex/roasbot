@@ -1,4 +1,4 @@
-// app/bots/BotsClient.tsx
+// app/(app)/bots/BotsClient.tsx
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
