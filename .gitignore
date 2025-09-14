@@ -56,3 +56,7 @@ prisma/.env
 # large artifacts
 *.zip
 roasbot.zip
+
+# large artifacts
+*.zip
+roasbot.zip
