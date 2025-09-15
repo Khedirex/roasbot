@@ -27,40 +27,94 @@ export function OPTIONS() {
   return new NextResponse(null, { status: 204, headers: CORS_HEADERS });
 }
 
-/** Util: deep DB check */
-async function checkDb() {
-  await prisma.$queryRawUnsafe("SELECT 1");
+/* ===== Utils ===== */
+
+/** Tiny timeout helper para promessas que não suportam AbortController */
+async function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
+  return await Promise.race([
+    p,
+    new Promise<never>((_, r) =>
+      setTimeout(() => r(new Error(`${label}: timeout after ${ms}ms`)), ms),
+    ),
+  ]);
+}
+
+/** Deep DB check (rápido, sem tocar em tabelas) */
+async function checkDb(timeoutMs = 3000) {
+  // SELECT 1 é universal e evita lock/tabelas inexistentes
+  await withTimeout(prisma.$queryRawUnsafe("SELECT 1"), timeoutMs, "db");
   return "ok" as const;
 }
 
-/** Util: deep Telegram check (opcionalmente por casa/kind) */
-async function checkTelegram(opts?: { casa?: string; kind?: string; timeoutMs?: number }) {
-  const { casa, kind, timeoutMs = 7000 } = opts || {};
+/** Tenta pegar alvo no Prisma; se não houver modelo/tabela, cai no fallback via ENV */
+async function resolveTelegramTargetFromPrisma(opts?: { casa?: string; kind?: string }) {
   const where: any = { active: true };
-  if (casa) where.casa = String(casa).trim().toLowerCase();
-  if (kind) where.kind = String(kind).trim().toLowerCase();
+  if (opts?.casa) where.casa = String(opts.casa).trim().toLowerCase();
+  if (opts?.kind) where.kind = String(opts.kind).trim().toLowerCase();
 
-  const target =
-    (casa && kind)
-      ? await prisma.telegramTarget.findUnique({ where: { casa_kind: { casa: where.casa, kind: where.kind } } })
-      : await prisma.telegramTarget.findFirst({ where });
+  try {
+    // se existir índice composto casa_kind no schema, privilegia a busca direta
+    if (opts?.casa && opts?.kind && (prisma as any).telegramTarget?.findUnique) {
+      const t = await (prisma as any).telegramTarget.findUnique({
+        where: { casa_kind: { casa: where.casa, kind: where.kind } },
+      });
+      if (t?.active) return { botToken: t.botToken as string, chatId: t.chatId as string | number };
+    }
+    if ((prisma as any).telegramTarget?.findFirst) {
+      const t = await (prisma as any).telegramTarget.findFirst({ where });
+      if (t?.active) return { botToken: t.botToken as string, chatId: t.chatId as string | number };
+    }
+  } catch {
+    // modelo/tabela pode não existir ainda — ignora e usa ENV
+  }
+  return null;
+}
 
-  if (!target || !target.active) {
-    return { status: "no_active_target" as const };
+/** Deep Telegram check: usa registro ativo do Prisma ou cai pro ENV (TELEGRAM_BOT_TOKEN/ALERTS_CHAT_ID) */
+async function checkTelegram(opts?: {
+  casa?: string;
+  kind?: string;
+  timeoutMs?: number;
+  directEnv?: boolean; // força usar ENV direto
+}) {
+  const { casa, kind, timeoutMs = 7000, directEnv = false } = opts || {};
+  let cred:
+    | { botToken: string; chatId?: string | number }
+    | null = null;
+
+  if (!directEnv) {
+    cred = await resolveTelegramTargetFromPrisma({ casa, kind });
+  }
+  if (!cred) {
+    // fallback via ENV
+    const envToken = (process.env.TELEGRAM_BOT_TOKEN || "").trim();
+    const envChat = (process.env.ALERTS_CHAT_ID || "").trim();
+    cred = { botToken: envToken, chatId: envChat || undefined };
   }
 
+  if (!cred.botToken) {
+    return { status: "no_credentials" as const };
+  }
+
+  // valida o bot com getMe (não exige chatId)
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const r = await fetch(`https://api.telegram.org/bot${target.botToken}/getMe`, {
+    const r = await fetch(`https://api.telegram.org/bot${cred.botToken}/getMe`, {
       method: "GET",
       signal: controller.signal,
+      cache: "no-store",
     });
     const data = await r.json().catch(() => ({}));
     if (!r.ok || !data?.ok) {
-      return { status: "error" as const, data };
+      return { status: "error" as const, data, httpStatus: r.status };
     }
-    return { status: "ok" as const, bot: data.result?.username ?? null, chatId: target.chatId };
+    return {
+      status: "ok" as const,
+      bot: data.result?.username ?? null,
+      hasChatId: !!cred.chatId,
+      chatId: cred.chatId ?? null,
+    };
   } catch (e: any) {
     return { status: "error" as const, message: String(e?.message ?? e) };
   } finally {
@@ -68,14 +122,16 @@ async function checkTelegram(opts?: { casa?: string; kind?: string; timeoutMs?: 
   }
 }
 
+/* ===== Handler ===== */
+
 /**
  * GET /api/healthz
- * - shallow: sempre 200 com info básica
+ * - shallow (default): sempre 200 com info básica
  * - deep=db|1: checa DB; 503 se falhar
- * - deep=telegram: checa Telegram (getMe) com target ativo (ou casa/kind); 503 se falhar
+ * - deep=telegram: checa Telegram (getMe) usando alvo ativo do Prisma; 503 se falhar
+ *   - ?direct=1 força usar ENV (TELEGRAM_BOT_TOKEN/ALERTS_CHAT_ID) em vez do Prisma
+ *   - ?casa=...&kind=... filtra o alvo do Prisma
  * - deep=all: DB + Telegram; 503 se algum falhar
- *   Params opcionais para deep=telegram/all:
- *     ?casa=...&kind=...
  */
 export async function GET(req: Request) {
   const url = new URL(req.url);
@@ -90,13 +146,18 @@ export async function GET(req: Request) {
     nowIso: new Date().toISOString(),
     env: {
       nodeEnv: process.env.NODE_ENV,
-      ingestAllowAny: process.env.INGEST_ALLOW_ANY === "true" ? "true" : "false",
+      ingestAllowAny: (process.env.INGEST_ALLOW_ANY ?? "").toString() === "true" ? "true" : "false",
       ingestTokensConfigured:
         ((process.env.INGEST_TOKENS ?? process.env.INGEST_TOKEN ?? "").trim().length > 0),
+      telegramEnv: {
+        hasBotToken: !!(process.env.TELEGRAM_BOT_TOKEN || "").trim(),
+        hasAlertsChatId: !!(process.env.ALERTS_CHAT_ID || "").trim(),
+      },
     },
     versions: {
       node: process.version,
-      next: process.env.NEXT_RUNTIME ?? "nodejs",
+      // Nota: NEXT_RUNTIME indica runtime do handler, mas não é a versão do Next.
+      nextRuntime: process.env.NEXT_RUNTIME ?? "nodejs",
     },
   };
 
@@ -109,13 +170,14 @@ export async function GET(req: Request) {
 
   const casa = url.searchParams.get("casa") || undefined;
   const kind = url.searchParams.get("kind") || undefined;
+  const directEnv = (url.searchParams.get("direct") || "") === "1";
 
-  const deepRes: any = {};
+  const deepRes: Record<string, unknown> = {};
   let statusCode = 200;
 
   if (wantDb) {
     try {
-      await checkDb();
+      await checkDb(3000);
       deepRes.db = "ok";
     } catch (e: any) {
       deepRes.db = { status: "error", message: String(e?.message ?? e) };
@@ -124,7 +186,7 @@ export async function GET(req: Request) {
   }
 
   if (wantTg) {
-    const tg = await checkTelegram({ casa, kind });
+    const tg = await checkTelegram({ casa, kind, directEnv });
     deepRes.telegram = tg;
     if (tg.status !== "ok") statusCode = 503;
   }

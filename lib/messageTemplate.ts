@@ -1,4 +1,6 @@
 // lib/messageTemplate.ts
+
+// ===== Tipos base =====
 export type GameKind = "double" | "crash" | "branco" | "wingo" | "aviator";
 
 export type StrategyMessages = {
@@ -57,21 +59,44 @@ export type CurrentSignal = {
   horarioAtual?: Date;
 };
 
-export type MessageContext = {
-  game: GameKind;
-  stats: DailyStats;
-  current?: CurrentSignal;
-  now?: Date;
+// Contexto genérico, mas com campos conhecidos opcionais
+export type MessageContext =
+  & Record<string, any>
+  & {
+      game?: GameKind;
+      stats?: Partial<DailyStats>;
+      current?: Partial<CurrentSignal>;
+      now?: Date | string | number;
+    };
+
+// ===== Utils =====
+const pad2 = (n: number) => String(n).padStart(2, "0");
+
+const toDate = (v?: Date | string | number) => {
+  if (v instanceof Date) return v;
+  if (typeof v === "number") return new Date(v);
+  if (typeof v === "string") return new Date(v);
+  return new Date();
 };
 
-const pad2 = (n: number) => String(n).padStart(2, "0");
-const fmtDateBR = (d: Date) => `${pad2(d.getDate())}/${pad2(d.getMonth() + 1)}/${d.getFullYear()}`;
-const fmtTimeBR = (d: Date) => `${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}`;
+const fmtDateBR = (d: Date) =>
+  `${pad2(d.getDate())}/${pad2(d.getMonth() + 1)}/${d.getFullYear()}`;
+
+const fmtTimeBR = (d: Date) =>
+  `${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}`;
 
 function percentAssertividade(wins: number, losses: number) {
   const total = wins + losses;
   if (!total) return "0%";
   return `${Math.round((wins / total) * 100)}%`;
+}
+
+/** Converte [url=https://site]{Texto}[/url] em <a href="...">Texto</a> (para parse_mode=HTML) */
+export function toHtmlLinks(text: string) {
+  return text.replace(
+    /\[url=(https?:\/\/[^\]\s]+)\](.*?)\[\/url\]/gi,
+    (_m, href, label) => `<a href="${href}">${label || href}</a>`,
+  );
 }
 
 /** [TAG] -> valor simples */
@@ -97,23 +122,25 @@ function replaceBold(template: string) {
   return template.replace(/\[N\]([\s\S]*?)\[\/N\]/g, (_m, inner) => `**${inner}**`);
 }
 
-/** [url=...]Texto[/url] -> Texto (url)  */
-function replaceUrl(template: string) {
+/** [url=...]Texto[/url] -> Texto (url)  — fallback (quando não usar HTML) */
+function replaceUrlFallback(template: string) {
   return template.replace(/\[url=(.+?)\](.+?)\[\/url\]/g, (_m, href, text) => `${text} (${href})`);
 }
 
-/** [TIPO_GREEN_*] */
-function replaceTipoGreen(template: string, galeAtual?: number) {
-  const txtMin = galeAtual && galeAtual > 0 ? `com ${galeAtual} gales` : "de primeira";
-  const txtMai = galeAtual && galeAtual > 0 ? `COM ${galeAtual} GALES` : "DE PRIMEIRA";
+/** [TIPO_GREEN_*] — usa galeDaEntrada (se vier) senão GALE_ATUAL */
+function replaceTipoGreen(template: string, gale?: number) {
+  const txtMin = gale && gale > 0 ? `com ${gale} gales` : "de primeira";
+  const txtMai = gale && gale > 0 ? `COM ${gale} GALES` : "DE PRIMEIRA";
   return template
     .replace(/\[TIPO_GREEN_MINUSCULO\]/g, txtMin)
     .replace(/\[TIPO_GREEN_MAIUSCULO\]/g, txtMai);
 }
 
-/** Variáveis por jogo */
+/** Variáveis específicas por jogo */
 function replaceByGame(template: string, ctx: MessageContext) {
+  const s = ctx.stats ?? {};
   const cur = ctx.current ?? {};
+
   switch (ctx.game) {
     case "double": {
       const listToText = (v?: string | string[]) => (Array.isArray(v) ? v.join(", ") : v ?? "");
@@ -124,8 +151,8 @@ function replaceByGame(template: string, ctx: MessageContext) {
         RESULTADO_COR_EMOJI: listToText(cur.resultadoCorEmoji),
         RESULTADO_COR_EMOJI_BOLA: listToText(cur.resultadoCorEmoji),
         RESULTADO_COR_TEXTO: listToText(cur.resultadoCorTexto),
-        WHITES: ctx.stats.whites ?? 0,
-        HORARIO_ULTIMO_BRANCO: ctx.stats.horarioUltimoBranco ? fmtTimeBR(new Date(ctx.stats.horarioUltimoBranco)) : "",
+        WHITES: s.whites ?? 0,
+        HORARIO_ULTIMO_BRANCO: s.horarioUltimoBranco ? fmtTimeBR(toDate(s.horarioUltimoBranco)) : "",
         NUM_REFERENCIA_TEXTO: cur.numReferenciaTexto ?? "",
         NUM_REFERENCIA_EMOJI: cur.numReferenciaEmoji ?? "",
         NUM_REFERENCIA_GIRO: cur.numReferenciaGiro ?? "",
@@ -135,8 +162,8 @@ function replaceByGame(template: string, ctx: MessageContext) {
       return replaceSimple(template, {
         VELA_APOSTA_TEXTO: cur.velaApostaTexto ?? "",
         RESULTADO_VELA_TEXTO: cur.resultadoVelaTexto ?? "",
-        WINS_MAIORES_2X: ctx.stats.winsMaiores2x ?? 0,
-        HORARIO_ULTIMO_MAIOR_2X: ctx.stats.horarioUltimoMaior2x ? fmtTimeBR(new Date(ctx.stats.horarioUltimoMaior2x)) : "",
+        WINS_MAIORES_2X: s.winsMaiores2x ?? 0,
+        HORARIO_ULTIMO_MAIOR_2X: s.horarioUltimoMaior2x ? fmtTimeBR(toDate(s.horarioUltimoMaior2x)) : "",
         VELA_REFERENCIA_TEXTO: cur.velaReferenciaTexto ?? "",
       });
     }
@@ -151,13 +178,13 @@ function replaceByGame(template: string, ctx: MessageContext) {
         CORES_APOSTA_PROTECAO_TEXTO_NOVA_LINHA: protLineTexto,
         RESULTADO_TAMANHO_TEXTO: cur.resultadoTamanhoTexto ?? "",
         RESULTADO_NUMERO: cur.resultadoNumero ?? "",
-        PURPLES: ctx.stats.purples ?? 0,
-        HORARIO_ULTIMO_ROXO: ctx.stats.horarioUltimoRoxo ? fmtTimeBR(new Date(ctx.stats.horarioUltimoRoxo)) : "",
+        PURPLES: s.purples ?? 0,
+        HORARIO_ULTIMO_ROXO: s.horarioUltimoRoxo ? fmtTimeBR(toDate(s.horarioUltimoRoxo)) : "",
         WIN_DUPLO_MINUSCULO: cur.isWinDuplo ? " duplo" : "",
         WIN_DUPLO_MAIUSCULO: cur.isWinDuplo ? " DUPLO" : "",
         WIN_PROTECAO_MINUSCULO: cur.isWinProtecao ? " na proteção" : "",
         WIN_PROTECAO_MAIUSCULO: cur.isWinProtecao ? " NA PROTEÇÃO" : "",
-        CP: ctx.stats.cp ?? 0,
+        CP: s.cp ?? 0,
       });
     }
     case "branco":
@@ -167,30 +194,50 @@ function replaceByGame(template: string, ctx: MessageContext) {
   }
 }
 
-/** Função principal: aplica todas as variáveis e transformações */
-export function renderTemplate(template: string, ctx: MessageContext): string {
-  const now = ctx.now ?? ctx.current?.horarioAtual ?? new Date();
+// ===== Função principal =====
+/**
+ * Renderiza `template` substituindo:
+ * - Globais: [DATA_HOJE], [HORA_AGORA], [WINS], [LOSSES], [PERCENTUAL_ASSERTIVIDADE], [GALE_ATUAL], [MAX_GALES], [GANHOS_CONSECUTIVOS], [GANHOS_CONSECUTIVOS_GALE], [GANHOS_CONSECUTIVOS_SEMGALE], [SG], [NOME_ESTRATEGIA]
+ * - Níveis: [G1]..[G20]
+ * - Tipo green: [TIPO_GREEN_MINUSCULO] / [TIPO_GREEN_MAIUSCULO]
+ * - Formatações: [N]bold[/N], [url=...]Texto[/url] (fallback plain-text)
+ * - Por jogo (Double/Crash/Wingo)
+ * Obs.: se for usar links HTML no Telegram, após renderizar use `toHtmlLinks()` e `parse_mode="HTML"`.
+ */
+export function renderTemplate(template: string, ctxRaw: MessageContext): string {
+  const ctx: MessageContext = {
+    game: ctxRaw.game,
+    stats: ctxRaw.stats ?? {},
+    current: ctxRaw.current ?? {},
+    now: ctxRaw.now,
+    ...ctxRaw, // permite extras personalizados
+  };
+
+  const now = toDate(ctx.now ?? ctx.current?.horarioAtual);
 
   let out = replaceSimple(template, {
     DATA_HOJE: fmtDateBR(now),
     HORA_AGORA: fmtTimeBR(now),
-    WINS: ctx.stats.wins ?? 0,
-    LOSSES: ctx.stats.losses ?? 0,
-    PERCENTUAL_ASSERTIVIDADE: percentAssertividade(ctx.stats.wins ?? 0, ctx.stats.losses ?? 0),
-    GALE_ATUAL: ctx.stats.galeAtual ?? 0,
-    MAX_GALES: ctx.stats.maxGales ?? 0,
-    GANHOS_CONSECUTIVOS: ctx.stats.ganhosConsecutivos ?? 0,
-    GANHOS_CONSECUTIVOS_GALE: ctx.stats.ganhosConsecutivosGale ?? 0,
-    GANHOS_CONSECUTIVOS_SEMGALE: ctx.stats.ganhosConsecutivosSemGale ?? 0,
-    SG: ctx.stats.sg ?? 0,
-    NOME_ESTRATEGIA: ctx.current?.strategyName ?? "",
+    WINS: Number(ctx.stats?.wins ?? 0),
+    LOSSES: Number(ctx.stats?.losses ?? 0),
+    PERCENTUAL_ASSERTIVIDADE: percentAssertividade(
+      Number(ctx.stats?.wins ?? 0),
+      Number(ctx.stats?.losses ?? 0),
+    ),
+    GALE_ATUAL: Number(ctx.stats?.galeAtual ?? 0),
+    MAX_GALES: Number(ctx.stats?.maxGales ?? 0),
+    GANHOS_CONSECUTIVOS: Number(ctx.stats?.ganhosConsecutivos ?? 0),
+    GANHOS_CONSECUTIVOS_GALE: Number(ctx.stats?.ganhosConsecutivosGale ?? 0),
+    GANHOS_CONSECUTIVOS_SEMGALE: Number(ctx.stats?.ganhosConsecutivosSemGale ?? 0),
+    SG: Number(ctx.stats?.sg ?? 0),
+    NOME_ESTRATEGIA: String(ctx.current?.strategyName ?? ""),
   });
 
-  // ordem importa: primeiro globais, depois níveis G, green-type, formatações e variáveis por jogo
-  out = replaceGLevels(out, ctx.stats.gWinsByLevel);
-  out = replaceTipoGreen(out, ctx.current?.galeDaEntrada ?? ctx.stats.galeAtual);
+  // ordem importa
+  out = replaceGLevels(out, ctx.stats?.gWinsByLevel);
+  out = replaceTipoGreen(out, ctx.current?.galeDaEntrada ?? ctx.stats?.galeAtual);
   out = replaceBold(out);
-  out = replaceUrl(out);
+  out = replaceUrlFallback(out); // se estiver usando HTML, prefira `toHtmlLinks()` depois
   out = replaceByGame(out, ctx);
 
   return out;
