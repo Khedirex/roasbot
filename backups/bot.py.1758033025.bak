@@ -1,0 +1,56 @@
+from flask import Blueprint, request, jsonify
+from src.models.bot import Bot
+from src.models.user import db
+
+bot_bp = Blueprint("bot", __name__)  # garanta que o nome bate com o import do main.py
+
+@bot_bp.route("/bots", methods=["GET"])
+def get_bots():
+    bots = Bot.query.order_by(Bot.id.asc()).all()
+    data = [b.to_dict() if hasattr(b, "to_dict") else {
+        "id": b.id, "name": b.name, "game_type": b.game_type, "casino_site": b.casino_site,
+        "telegram_token": b.telegram_token, "telegram_chat_id": b.telegram_chat_id,
+        "is_active": b.is_active, "created_at": (b.created_at.isoformat() if b.created_at else None)
+    } for b in bots]
+    return jsonify({"success": True, "data": data})
+
+@bot_bp.route("/bots/<int:bot_id>", methods=["GET"])
+def get_bot(bot_id):
+    b = Bot.query.get_or_404(bot_id)
+    return jsonify({"success": True, "data": b.to_dict() if hasattr(b, "to_dict") else {
+        "id": b.id, "name": b.name, "game_type": b.game_type, "casino_site": b.casino_site,
+        "telegram_token": b.telegram_token, "telegram_chat_id": b.telegram_chat_id,
+        "is_active": b.is_active, "created_at": (b.created_at.isoformat() if b.created_at else None)
+    }})
+
+@bot_bp.route("/bots", methods=["POST"])
+def create_bot():
+    j = request.get_json(force=True) or {}
+    b = Bot(
+        name=j.get("name") or "Bot",
+        game_type=j.get("game_type") or "aviator",
+        casino_site=j.get("casino_site"),
+        telegram_token=j.get("telegram_token"),
+        telegram_chat_id=j.get("telegram_chat_id"),
+        is_active=bool(j.get("is_active", True)),
+    )
+    db.session.add(b)
+    db.session.commit()
+    return jsonify({"success": True, "data": {"id": b.id}}), 201
+
+@bot_bp.route("/bots/<int:bot_id>", methods=["PUT", "PATCH"])
+def update_bot(bot_id):
+    b = Bot.query.get_or_404(bot_id)
+    j = request.get_json(force=True) or {}
+    for k in ["name", "game_type", "casino_site", "telegram_token", "telegram_chat_id", "is_active"]:
+        if k in j:
+            setattr(b, k, j[k])
+    db.session.commit()
+    return jsonify({"success": True, "data": {"id": b.id}})
+
+@bot_bp.route("/bots/<int:bot_id>", methods=["DELETE"])
+def delete_bot(bot_id):
+    b = Bot.query.get_or_404(bot_id)
+    db.session.delete(b)
+    db.session.commit()
+    return jsonify({"success": True, "data": {"id": bot_id}})

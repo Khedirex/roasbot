@@ -8,6 +8,7 @@ import {
   type Color,
 } from "@/app/(app)/bots/aviator/StrategiesPanel";
 import type { StrategyMessages } from "@/app/(app)/bots/aviator/StrategyMessagesForm";
+import { PatternBuilder } from "@/components/PatternBuilder";
 
 /** ===== Tipos ===== */
 type Metrics = { jogadas: number; greens: number; reds: number };
@@ -34,7 +35,35 @@ type Robot = {
   chatId: string;
   strategies: Strategy[];
   metrics: Metrics;
+  enabled?: boolean;
 };
+
+// --- Rascunho / Draft de nova estratégia ---
+type DraftStrategy = {
+  robotId: string;
+  name: string;
+  startHour: string;
+  endHour: string;
+  winAt: number;
+  mgCount: number;
+  pattern: string[];
+  messages: Record<string, string>;
+  enabled: boolean;
+};
+
+function makeEmptyDraft(robotId: string): DraftStrategy {
+  return {
+    robotId,
+    name: "",
+    startHour: "00:00",
+    endHour: "23:59",
+    winAt: 3,
+    mgCount: 0,
+    pattern: [],
+    messages: {},
+    enabled: true,
+  };
+}
 
 type Game = "aviator" | "bacbo";
 type CasaSlug = "1win" | "lebull";
@@ -85,6 +114,27 @@ async function renderMessage(template: string, ctx: any) {
   return json.text as string;
 }
 
+// normaliza qualquer formato de pattern (array/string/objeto) -> string[]
+function normalizePattern(p: any): string[] {
+  if (Array.isArray(p)) return p;
+  if (p == null) return [];
+  if (typeof p === "string") {
+    try {
+      const parsed = JSON.parse(p);
+      if (Array.isArray(parsed)) return parsed;
+      if (typeof parsed === "string") return [parsed];
+    } catch {
+      return [p];
+    }
+  }
+  if (typeof p === "object") {
+    if (Array.isArray((p as any)["pattern-list"])) return (p as any)["pattern-list"];
+    if (Array.isArray((p as any).colors)) return (p as any).colors;
+    return Object.values(p).flat().filter((x) => typeof x === "string") as string[];
+  }
+  return [];
+}
+
 // envia via seu endpoint (sem CORS)
 async function sendViaApi(botToken: string, chatId: string, text: string) {
   const resp = await fetch("/api/send/telegram", {
@@ -99,15 +149,58 @@ async function sendViaApi(botToken: string, chatId: string, text: string) {
   }
 }
 
+async function createStrategyAPI(input: {
+  robotId: string;
+  name: string;
+  startHour?: string;
+  endHour?: string;
+  winAt?: number;
+  mgCount?: number;
+  pattern?: any[];
+  messages?: Record<string, string>;
+  active?: boolean;
+}) {
+  const res = await fetch("/api/strategies", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  const j = await res.json();
+  if (!res.ok || !j.ok) throw new Error(j?.error || "Falha ao criar estratégia");
+  return j.data;
+}
+
+async function patchStrategyAPI(id: string, patch: any) {
+  const res = await fetch(`/api/strategies/${id}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(patch),
+  });
+  const j = await res.json();
+  if (!res.ok || !j.ok) throw new Error(j?.error || "Falha ao atualizar estratégia");
+  return j.data;
+}
+
+async function patchRobotAPI(id: string, patch: any) {
+  const res = await fetch(`/api/robots/${id}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(patch),
+  });
+  const j = await res.json();
+  if (!res.ok || !j.ok) throw new Error(j?.error || "Falha ao atualizar robot");
+  return j.data;
+}
+
 /** ===== Legenda descritiva das cores ===== */
 type LegendItem = { key: string; title: string; desc: string; dotClass: string };
 const COLOR_MEANINGS: LegendItem[] = [
-  { key: "gray",  title: "COR CINZA",  desc: "Poderá ser qualquer resultado",            dotClass: "bg-gray-400" },
-  { key: "green", title: "COR VERDE",  desc: "Caso seja uma vela igual ou maior a 2x",   dotClass: "bg-green-500" },
-  { key: "black", title: "COR PRETA",  desc: "Caso caia uma vela menor que 2x",          dotClass: "bg-black" },
-  { key: "white", title: "COR BRANCA", desc: "Vela em crash instantâneo (1.00x)",        dotClass: "bg-white border" }, // referência
-  { key: "blue",  title: "COR AZUL",   desc: "Vela maior ou igual ao valor customizado", dotClass: "bg-blue-500" },
-  { key: "pink",  title: "COR ROSA",   desc: "Vela menor ou igual ao valor customizado", dotClass: "bg-pink-500" },
+  { key: "gray", title: "COR CINZA", desc: "Poderá ser qualquer resultado", dotClass: "bg-gray-400" },
+  { key: "green", title: "COR VERDE", desc: "Caso seja uma vela igual ou maior a 2x", dotClass: "bg-green-500" },
+  { key: "black", title: "COR PRETA", desc: "Caso caia uma vela menor que 2x", dotClass: "bg-black" },
+  { key: "white", title: "COR BRANCA", desc: "Vela em crash instantâneo (1.00x)", dotClass: "bg-white border" },
+  { key: "blue", title: "COR AZUL", desc: "Vela maior ou igual ao valor customizado", dotClass: "bg-blue-500" },
+  { key: "pink", title: "COR ROSA", desc: "Vela menor ou igual ao valor customizado", dotClass: "bg-pink-500" },
 ];
 function LegendRow({ item }: { item: LegendItem }) {
   return (
@@ -262,8 +355,57 @@ export default function RobotManager({ botId, bot, casa }: Props) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [hydrated, setHydrated] = useState(false);
 
-  const PALETTE = ["green", "gray", "black", "red", "blue", "pink"] as const;
+  // ⚠️ Paleta correta (sem "red")
+  const PALETTE = ["green", "gray", "black", "white", "blue", "pink"] as const;
   const isColor = (v: unknown): v is Color => (PALETTE as readonly string[]).includes(v as string);
+
+  // Normaliza qualquer forma (nome, hex, rgb, tokens UI/RGB) -> Color
+  function normalizeColor(x: unknown): Color {
+    if (typeof x !== "string") return "gray";
+    const s = x.trim();
+
+    // nomes
+    if (isColor(s)) return s as Color;
+
+    // tokens UI
+    const U = s.toUpperCase();
+    if (U === "A") return "blue";
+    if (U === "W") return "white";
+    if (U === "G") return "green";
+    if (U === "P") return "pink";
+    if (U === "K") return "black";
+    if (U === "X") return "gray";
+
+    // runtime RGB
+    if (U === "R") return "pink"; // baixa
+    if (U === "B") return "white"; // branco
+    if (U === "G") return "green"; // alta
+
+    // hex
+    const hex = s.startsWith("#") ? s.toLowerCase() : `#${s.toLowerCase()}`;
+    if (/^#[0-9a-f]{6}$/i.test(hex)) {
+      if (hex === "#22c55e") return "green";
+      if (hex === "#9ca3af") return "gray";
+      if (hex === "#111827") return "black";
+      if (hex === "#ffffff") return "white";
+      if (hex === "#3b82f6") return "blue";
+      if (hex === "#ec4899") return "pink";
+    }
+
+    // rgb(...) ou "r, g, b"
+    const m = s.match(/(\d{1,3})[,\s]+(\d{1,3})[,\s]+(\d{1,3})/);
+    if (m) {
+      const key = `${Math.min(255, +m[1])},${Math.min(255, +m[2])},${Math.min(255, +m[3])}`;
+      if (key === "34,197,94") return "green";
+      if (key === "156,163,175") return "gray";
+      if (key === "17,24,39") return "black";
+      if (key === "255,255,255") return "white";
+      if (key === "59,130,246") return "blue";
+      if (key === "236,72,153") return "pink";
+    }
+
+    return "gray";
+  }
 
   const enabledKey = useMemo(
     () => (selectedId ? `roasbot:${realBotId}:${selectedId}:enabled` : ""),
@@ -316,10 +458,41 @@ export default function RobotManager({ botId, bot, casa }: Props) {
   const selected = robots.find((r) => r.id === selectedId) ?? null;
 
   useEffect(() => {
-    if (!selected) { setActiveStrategies(0); return; }
+    if (!selected) {
+      setActiveStrategies(0);
+      return;
+    }
     const count = (selected.strategies ?? []).filter((s) => s.enabled).length;
     setActiveStrategies(count);
   }, [selected?.id, selected?.strategies]);
+
+  // --- Draft de estratégia (AGORA dentro do componente) ---
+  const [newDraft, setNewDraft] = useState<DraftStrategy | null>(null);
+  const [savingDraft, setSavingDraft] = useState(false);
+
+  async function saveDraft() {
+    if (!newDraft) return;
+    if (!newDraft.name.trim()) {
+      alert("Dê um nome para a estratégia.");
+      return;
+    }
+    setSavingDraft(true);
+    try {
+      const r = await fetch("/api/strategies", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(newDraft),
+      });
+      const j = await r.json();
+      if (!r.ok || !j.ok) throw new Error(j?.error || "Erro ao salvar");
+      setNewDraft(null);
+      location.reload();
+    } catch (e: any) {
+      alert(e?.message || String(e));
+    } finally {
+      setSavingDraft(false);
+    }
+  }
 
   /** ===== CRUD ===== */
   function addRobot() {
@@ -368,7 +541,7 @@ export default function RobotManager({ botId, bot, casa }: Props) {
       mgCount: s.mgCount,
       enabled: s.enabled,
       winAt: s.winAt,
-      pattern: (s.pattern as string[]) ?? [],
+      pattern: (s.pattern as Array<string | Color>).map<Color>((c) => normalizeColor(c)),
       messages: s.messages,
     }));
     updateRobot({ strategies: converted });
@@ -404,7 +577,10 @@ export default function RobotManager({ botId, bot, casa }: Props) {
   }, [selected?.strategies]);
 
   async function handlePreviewWin() {
-    if (!strategyForTest) { alert("Crie uma estratégia primeiro."); return; }
+    if (!strategyForTest) {
+      alert("Crie uma estratégia primeiro.");
+      return;
+    }
     const template =
       strategyForTest.messages?.onWin ??
       "✅ WIN! Hoje: [DATA_HOJE] às [HORA_AGORA] • Assertividade: [PERCENTUAL_ASSERTIVIDADE]";
@@ -435,9 +611,18 @@ export default function RobotManager({ botId, bot, casa }: Props) {
   }
 
   async function handleSendWinTest() {
-    if (!selected) { alert("Selecione um robô."); return; }
-    if (!strategyForTest) { alert("Crie uma estratégia primeiro."); return; }
-    if (!selected.botToken || !selected.chatId) { alert("Configure Bot Token e Chat ID do robô."); return; }
+    if (!selected) {
+      alert("Selecione um robô.");
+      return;
+    }
+    if (!strategyForTest) {
+      alert("Crie uma estratégia primeiro.");
+      return;
+    }
+    if (!selected.botToken || !selected.chatId) {
+      alert("Configure Bot Token e Chat ID do robô.");
+      return;
+    }
 
     const template =
       strategyForTest.messages?.onWin ??
@@ -509,7 +694,9 @@ export default function RobotManager({ botId, bot, casa }: Props) {
             >
               {robots.length === 0 && <option value="">Nenhum robô</option>}
               {robots.map((r) => (
-                <option key={r.id} value={r.id}>{r.name}</option>
+                <option key={r.id} value={r.id}>
+                  {r.name}
+                </option>
               ))}
             </select>
           </div>
@@ -543,19 +730,37 @@ export default function RobotManager({ botId, bot, casa }: Props) {
                 </div>
 
                 <div className="mt-4 flex items-center gap-2">
-                  <label className="text-sm text-gray-600">Status</label>
-                  <label className="relative inline-flex cursor-pointer items-center">
-                    <input type="checkbox" className="peer sr-only" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />
-                    <div className="h-6 w-11 rounded-full bg-gray-300 peer-checked:bg-blue-600 transition" />
-                    <span className="ml-2 text-sm">{enabled ? "Ligado ✅" : "Desligado ❌"}</span>
+                  <span className="text-sm text-gray-600">Status</span>
+                  <label className="flex items-center gap-2 text-sm">
+                    <input
+                      type="checkbox"
+                      checked={!!selected?.enabled}
+                      onChange={async (e) => {
+                        try {
+                          await patchRobotAPI(selected.id, { enabled: e.target.checked });
+                          setRobots((rs) =>
+                            rs.map((r) => (r.id === selected.id ? { ...r, enabled: e.target.checked } : r))
+                          );
+                        } catch (err: any) {
+                          alert(err?.message || "Falha ao atualizar robot");
+                        }
+                      }}
+                    />
+                    <span className="ml-1">{selected?.enabled ? "Ligado" : "Desligado"}</span>
                   </label>
                 </div>
 
                 <div className="mt-4 flex gap-2 flex-wrap">
-                  <button onClick={() => duplicateRobot(selected.id)} className="px-3 py-2 rounded-lg border hover:bg-gray-50 whitespace-nowrap">
+                  <button
+                    onClick={() => duplicateRobot(selected.id)}
+                    className="px-3 py-2 rounded-lg border hover:bg-gray-50 whitespace-nowrap"
+                  >
                     Duplicar
                   </button>
-                  <button onClick={() => removeRobot(selected.id)} className="px-3 py-2 rounded-lg border text-red-600 hover:bg-red-50 whitespace-nowrap">
+                  <button
+                    onClick={() => removeRobot(selected.id)}
+                    className="px-3 py-2 rounded-lg border text-red-600 hover:bg-red-50 whitespace-nowrap"
+                  >
                     Excluir
                   </button>
                 </div>
@@ -593,22 +798,106 @@ export default function RobotManager({ botId, bot, casa }: Props) {
             <h3 className="font-medium">Estratégia</h3>
 
             <div className="flex items-center gap-2">
-              <button className="px-3 py-2 rounded-lg border hover:bg-gray-50" onClick={handlePreviewWin} disabled={!strategyForTest}>
-                Pré-visualizar WIN
-              </button>
               <button
-                className="px-3 py-2 rounded-lg border bg-green-600 text-white hover:bg-green-700 disabled:opacity-60"
-                onClick={handleSendWinTest}
-                disabled={!strategyForTest || sending}
+                className="rounded-lg border px-3 py-2 text-sm hover:bg-gray-50"
+                onClick={() => {
+                  if (!selected?.id) {
+                    alert("Selecione um robô primeiro.");
+                    return;
+                  }
+                  setNewDraft(makeEmptyDraft(selected.id)); // abre o editor inline (sem prompt)
+                }}
               >
-                {sending ? "Enviando..." : "Enviar WIN (teste)"}
-              </button>
-
-              <button className="px-3 py-2 rounded-lg bg-blue-600 text-white hover:bg-blue-700" onClick={() => setShowStrategyEditor((v) => !v)}>
-                {showStrategyEditor ? "Ocultar editor" : "+ Nova estratégia"}
+                + Nova estratégia
               </button>
             </div>
           </div>
+
+          {/* Editor inline de NOVA estratégia (AGORA DENTRO do componente) */}
+          {newDraft && (
+            <div className="mb-4 rounded-2xl border bg-white p-4 shadow-sm">
+              <div className="text-lg font-semibold mb-3">Nova estratégia (rascunho)</div>
+
+              <div className="grid gap-3 md:grid-cols-3">
+                <label className="text-sm">
+                  Nome
+                  <input
+                    className="mt-1 w-full rounded-lg border px-3 py-2 text-sm"
+                    value={newDraft.name}
+                    onChange={(e) => setNewDraft({ ...newDraft, name: e.target.value })}
+                    placeholder="ex.: LowMults 3x"
+                  />
+                </label>
+
+                <label className="text-sm">
+                  Início
+                  <input
+                    className="mt-1 w-full rounded-lg border px-3 py-2 text-sm"
+                    value={newDraft.startHour}
+                    onChange={(e) => setNewDraft({ ...newDraft, startHour: e.target.value })}
+                    placeholder="00:00"
+                  />
+                </label>
+
+                <label className="text-sm">
+                  Fim
+                  <input
+                    className="mt-1 w-full rounded-lg border px-3 py-2 text-sm"
+                    value={newDraft.endHour}
+                    onChange={(e) => setNewDraft({ ...newDraft, endHour: e.target.value })}
+                    placeholder="23:59"
+                  />
+                </label>
+
+                <label className="text-sm">
+                  Vitória em
+                  <input
+                    type="number"
+                    className="mt-1 w-full rounded-lg border px-3 py-2 text-sm"
+                    value={newDraft.winAt}
+                    onChange={(e) => setNewDraft({ ...newDraft, winAt: Number(e.target.value || 0) })}
+                    min={1}
+                  />
+                </label>
+
+                <label className="text-sm">
+                  Martingale (qtd.)
+                  <input
+                    type="number"
+                    className="mt-1 w-full rounded-lg border px-3 py-2 text-sm"
+                    value={newDraft.mgCount}
+                    onChange={(e) => setNewDraft({ ...newDraft, mgCount: Number(e.target.value || 0) })}
+                    min={0}
+                  />
+                </label>
+              </div>
+
+              <div className="mt-4">
+                <div className="mb-2 text-sm font-medium">Monte sua estratégia (quadradinhos)</div>
+                <PatternBuilder
+                  value={newDraft.pattern}
+                  onChange={(pattern: string[]) => setNewDraft({ ...newDraft, pattern })}
+                />
+              </div>
+
+              <div className="mt-4 flex gap-2">
+                <button
+                  onClick={() => setNewDraft(null)}
+                  className="rounded-lg border px-3 py-1.5 text-sm hover:bg-gray-50"
+                  disabled={savingDraft}
+                >
+                  Cancelar
+                </button>
+                <button
+                  onClick={saveDraft}
+                  className="rounded-lg bg-black px-4 py-1.5 text-sm text-white hover:opacity-90 disabled:opacity-60"
+                  disabled={savingDraft}
+                >
+                  {savingDraft ? "Salvando..." : "Salvar estratégia"}
+                </button>
+              </div>
+            </div>
+          )}
 
           <StrategiesPanel
             key={selected.id}
@@ -623,7 +912,7 @@ export default function RobotManager({ botId, bot, casa }: Props) {
               mgCount: s.mgCount,
               enabled: s.enabled,
               winAt: s.winAt,
-              pattern: (s.pattern as Array<string | Color>).map<Color>((c) => (isColor(c) ? c : ("gray" as Color))),
+              pattern: normalizePattern(s.pattern).map<Color>((c) => normalizeColor(c)),
               messages: s.messages,
             }))}
             onChange={(next) => setStrategies(next)}
@@ -637,7 +926,7 @@ export default function RobotManager({ botId, bot, casa }: Props) {
           />
 
           {/* ===== ABA RECOLHÍVEL: Legendas + Variáveis ===== */}
-          <details className="mt-4 rounded-xl border bg-white" >
+          <details className="mt-4 rounded-xl border bg-white">
             <summary className="cursor-pointer select-none list-none rounded-xl px-4 py-3 text-sm font-semibold hover:bg-gray-50 flex items-center justify-between">
               Ajuda: legendas e variáveis
               <span className="text-xs text-gray-500 ml-3">(clique para abrir/fechar)</span>
@@ -674,7 +963,8 @@ export default function RobotManager({ botId, bot, casa }: Props) {
                 </div>
 
                 <div className="mt-3 text-[11px] text-gray-600">
-                  Digite sempre com colchetes. Ex.: <code className="rounded bg-gray-100 px-1 py-0.5 border">[DATA_HOJE]</code>
+                  Digite sempre com colchetes. Ex.:{" "}
+                  <code className="rounded bg-gray-100 px-1 py-0.5 border">[DATA_HOJE]</code>
                 </div>
               </div>
             </div>

@@ -204,6 +204,44 @@ export default function BotsPage() {
     return { enabled, disabled, strategies, wins, reds, winRate };
   }, [snapshot]);
 
+  // [ADD] Botão "Sincronizar dashboard" preenche a dash a partir do banco (Prisma)
+async function syncDashboard() {
+  try {
+    const r = await fetch("/api/snapshot", { cache: "no-store" });
+    const j = await r.json();
+    if (!j.ok) throw new Error(j.error || "Falha ao ler snapshot");
+
+    const data: Record<string, any[]> = j.data; // { "aviator-1win": [robots...], ... }
+
+    // 1) grava as listas de robôs por botId
+    for (const [botId, robots] of Object.entries(data)) {
+      localStorage.setItem(`roasbot:robots:${botId}:list`, JSON.stringify(robots));
+      // 2) grava a flag de ligado/desligado para cada robô
+      for (const rob of robots) {
+        localStorage.setItem(
+          `roasbot:${botId}:${rob.id}:enabled`,
+          rob.enabled ? "true" : "false"
+        );
+      }
+    }
+
+    // 3) atualiza o registro de bots (somente os que existem de fato)
+    const botMetas = Object.keys(data).map((id) => {
+      const [game, casa] = id.split("-") as ["aviator" | "bacbo", "1win" | "lebull"];
+      const label = `${game === "aviator" ? "Aviator" : "Bac Bo"} @ ${
+        casa === "1win" ? "1Win" : "LeBull"
+      }`;
+      return { id, game, casa, label };
+    });
+    localStorage.setItem("roasbot.bots", JSON.stringify(botMetas));
+
+    alert("Dashboard sincronizada! Recarregando…");
+    location.reload();
+  } catch (e: any) {
+    alert(`Erro ao sincronizar: ${e?.message || String(e)}`);
+  }
+}
+
   return (
     <section className="space-y-6">
       {/* Título varia por modo */}
@@ -238,6 +276,16 @@ export default function BotsPage() {
       {!isManager && (
         <>
           {/* Seletor simples para abrir um manager específico */}
+              {/* [ADD] Ação rápida para popular as caixinhas da dash a partir do banco */}
+    <div className="flex items-center justify-between">
+      <h2 className="text-lg font-semibold">Configurar Bots</h2>
+      <button
+        onClick={syncDashboard}
+        className="rounded-lg bg-black px-3 py-1.5 text-sm text-white hover:opacity-90"
+      >
+        Sincronizar dashboard
+      </button>
+    </div>
           <div className="grid max-w-xl gap-4 md:grid-cols-2">
             <div className="space-y-1">
               <label className="text-sm text-gray-600">Jogo</label>

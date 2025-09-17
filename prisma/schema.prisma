@@ -98,6 +98,7 @@ model Strategy {
   blueThreshold Float?    // Azul: vela >= blueThreshold
   pinkThreshold Float?    // Rosa: vela <= pinkThreshold
   messages      Json?     // textos configuráveis da StrategyMessagesForm
+  enabled       Boolean  @default(true) // <— opcional
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
 
@@ -139,4 +140,44 @@ model TelegramLog {
   ok        Boolean
   payload   Json
   response  Json
+}
+/// Cursor por ROBOT para leitura incremental de eventos do IngestEvent.
+/// Não conflita com RobotState (que é por casa). Use este para múltiplos bots na mesma casa.
+model SignalCursor {
+  id        String   @id @default(cuid())
+  robotId   String
+  lastTs    BigInt   @default(0)   // último ts (ms) do IngestEvent processado p/ esse robot
+  lastId    String?               // (opcional) id do último IngestEvent
+  updatedAt DateTime  @updatedAt
+
+  @@unique([robotId])
+  @@index([lastTs, updatedAt])
+}
+
+/// Estado de padrão por estratégia (tail/streak).
+/// Mantém o contador independente por Strategy (seguro p/ várias estratégias com mesmo pattern).
+model StrategyState {
+  id          String   @id @default(cuid())
+  strategyId  String
+  tail        Int      @default(0)
+  // (opcional) cache do último ts avaliado, útil p/ diagnósticos
+  lastTs      BigInt   @default(0)
+  updatedAt   DateTime @updatedAt
+
+  @@unique([strategyId])
+}
+
+/// Log leve para deduplicar disparos (PRE/CONFIRM) por evento+estratégia.
+/// Você já tem TelegramLog p/ resposta do Telegram; aqui é p/ "o que foi decidido disparar".
+model SignalDispatch {
+  id          String   @id @default(cuid())
+  robotId     String
+  strategyId  String
+  kind        String   // "pre" | "confirm"
+  tail        Int
+  eventId     String   // IngestEvent.id
+  dedupeKey   String   @unique
+  createdAt   DateTime @default(now())
+
+  @@index([robotId, strategyId, createdAt])
 }

@@ -8,7 +8,7 @@ import { UI_TO_RGB } from "@/lib/uiTokens";
 // Ordem de rotação ao clicar (X → K → P → W → G → A → X...)
 const ORDER: UIToken[] = ["X", "K", "P", "W", "G", "A"];
 
-// Dica visual: mais antigo ←  ...  mais recente →
+// Dica visual
 const HINT = "Mais antigo à esquerda • Mais recente à direita";
 
 function nextToken(t: UIToken): UIToken {
@@ -31,7 +31,7 @@ const RUNTIME_TO_UI: Record<string, UIToken> = {
   R: "P", // pink como padrão visual p/ "R"
 };
 
-/** Tentativa leve de interpretar "rgb(...)" | "r,g,b" | "#rrggbb" */
+/** Interpreta "rgb(...)" | "r,g,b" | "#rrggbb" para chave RGB */
 function parseColorToRGBKey(s: string): string | null {
   const str = s.trim();
 
@@ -56,7 +56,7 @@ function parseColorToRGBKey(s: string): string | null {
   return null;
 }
 
-/** Mapa reverso a partir do que você já definiu em UI_TO_RGB (se existir como array/string) */
+/** Mapa reverso a partir do que você já definiu em UI_TO_RGB */
 const RGB_TO_UI: Record<string, UIToken> = (() => {
   const map: Record<string, UIToken> = {};
   (Object.keys(UI_TO_RGB) as UIToken[]).forEach((t) => {
@@ -73,9 +73,7 @@ const RGB_TO_UI: Record<string, UIToken> = (() => {
 
 /** Converte qualquer entrada para um UIToken válido */
 function toUIToken(x: AnyToken): UIToken {
-  // já é um dos tokens UI?
-  if (ORDER.includes(x as UIToken)) return x as UIToken;
-
+  if (ORDER.includes(x as UIToken)) return x as UIToken; // já é UI token
   const s = String(x).trim().toUpperCase();
 
   // runtime letters R/G/B
@@ -87,23 +85,22 @@ function toUIToken(x: AnyToken): UIToken {
   const key = parseColorToRGBKey(s);
   if (key && RGB_TO_UI[key]) return RGB_TO_UI[key];
 
-  // fallback
   return "X";
 }
 
 /* ==================== Componente ==================== */
 type Props = {
-  value: AnyToken[]; // 👈 agora tolera UI, R/G/B e cores
+  value: AnyToken[];             // tolera UI, R/G/B e cores
   onChange: (next: UIToken[]) => void;
-  size?: number; // número de slots (default 8)
-  showHint?: boolean; // mostra a dica esquerda→direita
-  showIndex?: boolean; // mostra índice nos quadrados
+  size?: number;                 // número de slots (default 15)
+  showHint?: boolean;            // mostra a dica esquerda→direita
+  showIndex?: boolean;           // mostra índice nos quadrados
 };
 
 export function PatternBuilder({
   value,
   onChange,
-  size = 8,
+  size = 15,            // <<< uma fileira com 15 quadradinhos por padrão
   showHint = true,
   showIndex = false,
 }: Props) {
@@ -112,12 +109,12 @@ export function PatternBuilder({
     toUIToken(value?.[i] ?? "X"),
   );
 
-  // grid responsivo sem depender de classes col-*
-  const colCount = Math.min(Math.max(size, 1), 12); // 1..12
+  // grade de UMA LINHA — cada célula é quadrada; scroll horizontal se precisar
+  const cellPx = 36; // equivalente a w-9/h-9
   const gridStyle: React.CSSProperties = {
     display: "grid",
     gap: 8,
-    gridTemplateColumns: `repeat(${colCount}, minmax(0, 1fr))`,
+    gridTemplateColumns: `repeat(${Math.max(1, size)}, ${cellPx}px)`,
   };
 
   function handleClick(e: MouseEvent, index: number) {
@@ -127,58 +124,55 @@ export function PatternBuilder({
 
     const copy = v.slice();
     if (isRightClick) {
-      // botão direito: limpa para X
-      copy[index] = "X";
+      copy[index] = "X";            // botão direito: limpar
     } else if (isShift) {
-      // SHIFT + clique: volta no ciclo
-      copy[index] = prevToken(copy[index]);
+      copy[index] = prevToken(copy[index]); // SHIFT: anterior
     } else {
-      // clique normal: avança no ciclo
-      copy[index] = nextToken(copy[index]);
+      copy[index] = nextToken(copy[index]); // clique: próximo
     }
     onChange(copy);
   }
 
   return (
     <div className="space-y-2">
-      {showHint && (
-        <div className="text-xs text-gray-500 select-none">{HINT}</div>
-      )}
+      {showHint && <div className="text-xs text-gray-500 select-none">{HINT}</div>}
 
-      <div style={gridStyle}>
-        {v.map((t, i) => (
-          <button
-            key={i}
-            onClick={(e) => handleClick(e, i)}
-            onContextMenu={(e) => handleClick(e, i)}
-            type="button"
-            aria-label={`Posição ${i + 1}: ${t}`}
-            className="h-8 rounded-md border flex items-center justify-center text-[10px] font-medium"
-            title={`${t} (clique: próxima • Shift+clique: anterior • botão direito: limpar)`}
-            style={{
-              background:
-                t === "A" ? "#3b82f6" : // azul
-                t === "W" ? "#ffffff" : // branco
-                t === "G" ? "#22c55e" : // verde
-                t === "P" ? "#ec4899" : // rosa
-                t === "K" ? "#111827" : // preto
-                "#9ca3af", // cinza (X)
-              color: t === "W" ? "#111827" : "#ffffff",
-              borderColor: t === "W" ? "#e5e7eb" : "transparent",
-            }}
-          >
-            {showIndex ? i + 1 : ""}
-          </button>
-        ))}
+      <div className="overflow-x-auto">
+        <div style={gridStyle}>
+          {v.map((t, i) => (
+            <button
+              key={i}
+              onClick={(e) => handleClick(e, i)}
+              onContextMenu={(e) => handleClick(e, i)}
+              type="button"
+              aria-label={`Posição ${i + 1}: ${t}`}
+              className="h-9 w-9 rounded-md border flex items-center justify-center text-[10px] font-medium shrink-0"
+              title={`${t} (clique: próxima • Shift+clique: anterior • botão direito: limpar)`}
+              style={{
+                background:
+                  t === "A" ? "#3b82f6" : // azul
+                  t === "W" ? "#ffffff" : // branco
+                  t === "G" ? "#22c55e" : // verde
+                  t === "P" ? "#ec4899" : // rosa
+                  t === "K" ? "#111827" : // preto
+                  "#9ca3af",             // cinza (X)
+                color: t === "W" ? "#111827" : "#ffffff",
+                borderColor: t === "W" ? "#e5e7eb" : "transparent",
+              }}
+            >
+              {showIndex ? i + 1 : ""}
+            </button>
+          ))}
+        </div>
       </div>
     </div>
   );
 }
 
 /* ========= Conversão UI (A/W/G/P/K/X) -> runtime RGB (R/G/B) =========
-   Regra (coerente com teu matcher):
+   Coerente com teu matcher:
    - A (azul)   → "G"  (multiplicador alto é green no matcher)
-   - W (branco) → "B"  (white == 1.00 mapeia pro 'B' do runtime)
+   - W (branco) → "B"  (white == 1.00)
    - G (verde)  → "G"
    - P (rosa)   → "R"  (baixa)
    - K (preto)  → "R"  (baixa <2x e não rosa)

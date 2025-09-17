@@ -5,8 +5,17 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
-    "start": "next start",
-    "lint": " next lint"
+    "start": "next start -p 3000",
+    "lint": " next lint",
+    "worker:signals": "dotenv -e .env.local -- tsx ./scripts/dispatchSignals.ts",
+    "dev:web": "next dev -p 3000",
+    "typecheck": "tsc --noEmit",
+    "dev:all": "concurrently -k -n WEB,WORKER \"npm run dev:web\" \"npm run worker:signals\"",
+    "diag": "dotenv -e .env.local -- tsx ./scripts/diag.ts",
+    "inject": "dotenv -e .env.local -- tsx ./scripts/devInject.ts",
+    "db:which": "dotenv -e .env.local -- tsx ./scripts/dbWhich.ts",
+    "sync:robots": "dotenv -e .env.local -- tsx ./scripts/syncRobots.ts",
+    "make:strategy": "dotenv -e .env.local -- tsx ./scripts/makeStrategy.ts"
   },
   "dependencies": {
     "@prisma/client": "^6.16.1",
@@ -36,10 +45,13 @@
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "concurrently": "^9.2.1",
+    "dotenv-cli": "^10.0.0",
     "eslint": "^9",
     "eslint-config-next": "15.5.2",
     "prisma": "^6.16.1",
     "tailwindcss": "^4",
+    "tsx": "^4.20.5",
     "tw-animate-css": "^1.3.8",
     "typescript": "^5"
   }

@@ -1,3 +1,5 @@
+//app/components/bots/aviator/StrategyForm.tsx
+
 "use client";
 
 import { useMemo } from "react";
@@ -5,6 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { usePersistedState } from "@/app/hooks/usePersistedState";
+import StrategyMessagesForm from "@/components/StrategyMessagesForm";
 
 type Props = {
   bot: string;
