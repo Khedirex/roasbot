@@ -6,26 +6,23 @@ const prismaLogLevels: Prisma.LogLevel[] =
     ? ["query", "info", "warn", "error"]
     : ["warn", "error"];
 
-declare global {
-  // eslint-disable-next-line no-var
-  var prisma: PrismaClient | undefined;
-}
+// evita múltiplas instâncias em dev/hmr
+const globalForPrisma = globalThis as unknown as { prisma?: PrismaClient };
 
-/** Singleton do Prisma */
 export const prisma =
-  globalThis.prisma ??
+  globalForPrisma.prisma ??
   new PrismaClient({
     log: prismaLogLevels,
-    datasources: {
-      db: { url: process.env.DATABASE_URL },
-    },
+    // ✅ use somente UM dos dois. Aqui, datasourceUrl:
+    datasourceUrl: process.env.DATABASE_URL,
+    // ❌ NÃO use "datasources" junto
+    // datasources: { db: { url: process.env.DATABASE_URL } },
   });
 
 if (process.env.NODE_ENV !== "production") {
-  globalThis.prisma = prisma;
+  globalForPrisma.prisma = prisma;
 }
 
-/** Opcional: garantir conexão antecipada */
 export async function ensureDb() {
   try {
     await prisma.$connect();

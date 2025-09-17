@@ -2,13 +2,9 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import {
-  StrategiesPanel,
-  type Strategy as PanelStrategy,
-  type Color,
-} from "@/app/(app)/bots/aviator/StrategiesPanel";
 import type { StrategyMessages } from "@/app/(app)/bots/aviator/StrategyMessagesForm";
 import { PatternBuilder } from "@/components/PatternBuilder";
+import StrategyEditor from "@/components/bots/StrategyEditor";
 
 /** ===== Tipos ===== */
 type Metrics = { jogadas: number; greens: number; reds: number };
@@ -22,6 +18,8 @@ type Strategy = {
   enabled: boolean;
   pattern: string[];
   winAt: number;
+  blueMin?: number; // Azul (mín.)
+  pinkMax?: number; // Rosa (máx.)
   messages?: StrategyMessages;
 };
 
@@ -49,6 +47,8 @@ type DraftStrategy = {
   pattern: string[];
   messages: Record<string, string>;
   enabled: boolean;
+  blueMin?: number;
+  pinkMax?: number;
 };
 
 function makeEmptyDraft(robotId: string): DraftStrategy {
@@ -62,6 +62,8 @@ function makeEmptyDraft(robotId: string): DraftStrategy {
     pattern: [],
     messages: {},
     enabled: true,
+    blueMin: undefined,
+    pinkMax: undefined,
   };
 }
 
@@ -71,7 +73,7 @@ type CasaSlug = "1win" | "lebull";
 /** Aceita botId (preferível) ou bot+casa */
 type Props = { botId?: string; bot?: Game; casa: CasaSlug };
 
-/* ===== Registro global ===== */
+/* ===== Registro global (localStorage p/ lista de bots) ===== */
 type BotMeta = { id: string; game: Game; casa: CasaSlug; label: string };
 const BOTS_KEY = "roasbot.bots";
 function labelOf(game: Game, casa: CasaSlug) {
@@ -149,36 +151,59 @@ async function sendViaApi(botToken: string, chatId: string, text: string) {
   }
 }
 
-async function createStrategyAPI(input: {
-  robotId: string;
-  name: string;
-  startHour?: string;
-  endHour?: string;
-  winAt?: number;
-  mgCount?: number;
-  pattern?: any[];
-  messages?: Record<string, string>;
-  active?: boolean;
-}) {
+/* ===== API helpers ===== */
+/** Filtra somente campos aceitos pelo backend para evitar erro do Prisma */
+const ALLOWED_FIELDS = new Set([
+  "name",
+  "startHour",
+  "endHour",
+  "winAt",
+  "mgCount",
+  "enabled",
+  "pattern",
+  "messages",
+  // OBS: blueMin/pinkMax ficam fora enquanto o backend não suportar
+]);
+function cleanPatch(patch: any) {
+  const out: any = {};
+  Object.keys(patch || {}).forEach((k) => {
+    const v = (patch as any)[k];
+    if (v === undefined || v === null) return;
+    if (ALLOWED_FIELDS.has(k)) out[k] = v;
+  });
+  return out;
+}
+
+async function createStrategyAPI(input: Partial<Strategy> & { robotId: string; name: string }) {
   const res = await fetch("/api/strategies", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(input),
+    body: JSON.stringify(cleanPatch(input)),
   });
   const j = await res.json();
   if (!res.ok || !j.ok) throw new Error(j?.error || "Falha ao criar estratégia");
-  return j.data;
+  return j.data as Strategy;
 }
 
-async function patchStrategyAPI(id: string, patch: any) {
+async function patchStrategyAPI(id: string, patch: Partial<Strategy>) {
   const res = await fetch(`/api/strategies/${id}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(patch),
   });
-  const j = await res.json();
-  if (!res.ok || !j.ok) throw new Error(j?.error || "Falha ao atualizar estratégia");
-  return j.data;
+  const j = await res.json().catch(() => ({}));
+  if (!res.ok || !j.ok) {
+    const err: any = new Error(j?.error || "Falha ao atualizar estratégia");
+    err.status = res.status; // <- para sabermos se é 404
+    throw err;
+  }
+  return j.data as Strategy;
+}
+
+async function deleteStrategyAPI(id: string) {
+  const res = await fetch(`/api/strategies/${id}`, { method: "DELETE" });
+  const j = await res.json().catch(() => ({}));
+  if (!res.ok || j?.ok === false) throw new Error(j?.error || "Falha ao excluir estratégia");
 }
 
 async function patchRobotAPI(id: string, patch: any) {
@@ -190,6 +215,46 @@ async function patchRobotAPI(id: string, patch: any) {
   const j = await res.json();
   if (!res.ok || !j.ok) throw new Error(j?.error || "Falha ao atualizar robot");
   return j.data;
+}
+
+/** ===== Paleta p/ normalização de cores ===== */
+type Color = "green" | "gray" | "black" | "white" | "blue" | "pink";
+const PALETTE = ["green", "gray", "black", "white", "blue", "pink"] as const;
+const isColor = (v: unknown): v is Color => (PALETTE as readonly string[]).includes(v as string);
+
+function normalizeColor(x: unknown): Color {
+  if (typeof x !== "string") return "gray";
+  const s = x.trim();
+  if (isColor(s)) return s as Color;
+  const U = s.toUpperCase();
+  if (U === "A") return "blue";
+  if (U === "W") return "white";
+  if (U === "G") return "green";
+  if (U === "P") return "pink";
+  if (U === "K") return "black";
+  if (U === "X") return "gray";
+  if (U === "R") return "pink";
+  if (U === "B") return "white";
+  const hex = s.startsWith("#") ? s.toLowerCase() : `#${s.toLowerCase()}`;
+  if (/^#[0-9a-f]{6}$/i.test(hex)) {
+    if (hex === "#22c55e") return "green";
+    if (hex === "#9ca3af") return "gray";
+    if (hex === "#111827") return "black";
+    if (hex === "#ffffff") return "white";
+    if (hex === "#3b82f6") return "blue";
+    if (hex === "#ec4899") return "pink";
+  }
+  const m = s.match(/(\d{1,3})[,\s]+(\d{1,3})[,\s]+(\d{1,3})/);
+  if (m) {
+    const key = `${Math.min(255, +m[1])},${Math.min(255, +m[2])},${Math.min(255, +m[3])}`;
+    if (key === "34,197,94") return "green";
+    if (key === "156,163,175") return "gray";
+    if (key === "17,24,39") return "black";
+    if (key === "255,255,255") return "white";
+    if (key === "59,130,246") return "blue";
+    if (key === "236,72,153") return "pink";
+  }
+  return "gray";
 }
 
 /** ===== Legenda descritiva das cores ===== */
@@ -214,7 +279,7 @@ function LegendRow({ item }: { item: LegendItem }) {
   );
 }
 
-/** ===== Variáveis de template (chips copiáveis com descrição) ===== */
+/** ===== Variáveis de template (chips) ===== */
 type VarItem = { code: string; desc: string };
 type VarGroup = { title: string; items: VarItem[] };
 
@@ -241,86 +306,7 @@ const VAR_GROUPS: VarGroup[] = [
       { code: "[NOME_ESTRATEGIA]", desc: "Nome da estratégia usada na entrada" },
     ],
   },
-  {
-    title: "Variáveis do robô — Double",
-    items: [
-      { code: "[CORES_APOSTA_EMOJI]", desc: "Cor(es) p/ apostar (emoji quadrado)" },
-      { code: "[CORES_APOSTA_EMOJI_BOLA]", desc: "Cor(es) p/ apostar (emoji redondo)" },
-      { code: "[CORES_APOSTA_TEXTO]", desc: "Cor(es) p/ apostar (texto)" },
-      { code: "[RESULTADO_COR_EMOJI]", desc: "Cor(es) do resultado (emoji quadrado)" },
-      { code: "[RESULTADO_COR_EMOJI_BOLA]", desc: "Cor(es) do resultado (emoji redondo)" },
-      { code: "[RESULTADO_COR_TEXTO]", desc: "Cor(es) do resultado (texto)" },
-      { code: "[WHITES]", desc: "Quantidade de wins no Branco (dia)" },
-      { code: "[HORARIO_ULTIMO_BRANCO]", desc: "Horário do último win no Branco" },
-      { code: "[NUM_REFERENCIA_TEXTO]", desc: "Casa de referência (texto)" },
-      { code: "[NUM_REFERENCIA_EMOJI]", desc: "Casa de referência (emoji)" },
-      { code: "[NUM_REFERENCIA_EMOJI_BOLA]", desc: "Casa de referência (emoji redondo)" },
-      { code: "[NUM_REFERENCIA_GIRO]", desc: "Giro de referência (texto)" },
-    ],
-  },
-  {
-    title: "Variáveis do robô — Crash",
-    items: [
-      { code: "[VELA_APOSTA_TEXTO]", desc: "Vela (cashout) p/ o usuário, em texto" },
-      { code: "[RESULTADO_VELA_TEXTO]", desc: "Vela do resultado da entrada (texto)" },
-      { code: "[WINS_MAIORES_2X]", desc: "Quantidade de wins >= 2x no dia" },
-      { code: "[HORARIO_ULTIMO_MAIOR_2X]", desc: "Horário do último win >= 2x" },
-      { code: "[VELA_REFERENCIA_TEXTO]", desc: "Última vela registrada antes da entrada confirmada" },
-    ],
-  },
-  {
-    title: "Variáveis do robô — Robô do Branco",
-    items: [
-      { code: "[LISTA_HORARIOS_APOSTA_BRANCO]", desc: "Lista de horários configurados" },
-      { code: "[HORARIO_1]", desc: "1º horário de aposta" },
-      { code: "[HORARIO_2]", desc: "2º horário de aposta" },
-      { code: "[HORARIO_3]", desc: "3º horário de aposta" },
-      { code: "[HORARIO_4]", desc: "4º horário de aposta" },
-    ],
-  },
-  {
-    title: "Variáveis do robô — WinGo (PopBra)",
-    items: [
-      { code: "[CORES_APOSTA_PROTECAO_EMOJI]", desc: "Emoji da cor de proteção (quadrado). Se for tamanho, mostra texto" },
-      { code: "[CORES_APOSTA_PROTECAO_EMOJI_BOLA]", desc: "Emoji da cor de proteção (redondo). Se for tamanho, mostra texto" },
-      { code: "[CORES_APOSTA_PROTECAO_TEXTO]", desc: 'Texto "Proteção: VERDE/GRANDE"' },
-      { code: "[CORES_APOSTA_PROTECAO_EMOJI_BOLA_NOVA_LINHA]", desc: 'Quebra de linha: "Proteção: X" (emoji redondo p/ cores; texto p/ tamanhos)' },
-      { code: "[CORES_APOSTA_PROTECAO_TEXTO_NOVA_LINHA]", desc: 'Quebra de linha: "Proteção: VERDE/GRANDE"' },
-      { code: "[RESULTADO_TAMANHO_TEXTO]", desc: "Tamanho do número que saiu (PEQUENO/GRANDE)" },
-      { code: "[RESULTADO_NUMERO]", desc: "Número que saiu (0…9)" },
-      { code: "[PURPLES]", desc: "Contagem de roxos que saíram" },
-      { code: "[HORARIO_ULTIMO_ROXO]", desc: "Último horário que saiu roxo" },
-      { code: "[WIN_DUPLO_MINUSCULO]", desc: 'Se green foi duplo — texto minúsculo (ex.: " Duplo")' },
-      { code: "[WIN_DUPLO_MAIUSCULO]", desc: 'Se green foi duplo — texto MAIÚSCULO (ex.: " DUPLO")' },
-      { code: "[WIN_PROTECAO_MINUSCULO]", desc: 'Se green foi na proteção — minúsculo (ex.: " na proteção")' },
-      { code: "[WIN_PROTECAO_MAIUSCULO]", desc: 'Se green foi na proteção — MAIÚSCULO (ex.: " NA PROTEÇÃO")' },
-      { code: "[CP]", desc: "Contagem de greens com proteção" },
-    ],
-  },
 ];
-
-function VarChip({ item }: { item: VarItem }) {
-  const [copied, setCopied] = useState(false);
-  async function copy() {
-    try {
-      await navigator.clipboard?.writeText(item.code);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1200);
-    } catch {}
-  }
-  return (
-    <button
-      type="button"
-      onClick={copy}
-      className="flex w-full items-start gap-3 rounded-lg border bg-white p-3 text-left hover:bg-gray-50"
-      title={`Clique para copiar ${item.code}`}
-    >
-      <code className="font-mono text-xs px-1 py-0.5 rounded bg-gray-100 border">{item.code}</code>
-      <span className="text-sm text-gray-700">{item.desc}</span>
-      <span className="ml-auto text-[11px] text-gray-400">{copied ? "copiado!" : "copiar"}</span>
-    </button>
-  );
-}
 
 /* ================= COMPONENTE ================= */
 export default function RobotManager({ botId, bot, casa }: Props) {
@@ -355,66 +341,6 @@ export default function RobotManager({ botId, bot, casa }: Props) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [hydrated, setHydrated] = useState(false);
 
-  // ⚠️ Paleta correta (sem "red")
-  const PALETTE = ["green", "gray", "black", "white", "blue", "pink"] as const;
-  const isColor = (v: unknown): v is Color => (PALETTE as readonly string[]).includes(v as string);
-
-  // Normaliza qualquer forma (nome, hex, rgb, tokens UI/RGB) -> Color
-  function normalizeColor(x: unknown): Color {
-    if (typeof x !== "string") return "gray";
-    const s = x.trim();
-
-    // nomes
-    if (isColor(s)) return s as Color;
-
-    // tokens UI
-    const U = s.toUpperCase();
-    if (U === "A") return "blue";
-    if (U === "W") return "white";
-    if (U === "G") return "green";
-    if (U === "P") return "pink";
-    if (U === "K") return "black";
-    if (U === "X") return "gray";
-
-    // runtime RGB
-    if (U === "R") return "pink"; // baixa
-    if (U === "B") return "white"; // branco
-    if (U === "G") return "green"; // alta
-
-    // hex
-    const hex = s.startsWith("#") ? s.toLowerCase() : `#${s.toLowerCase()}`;
-    if (/^#[0-9a-f]{6}$/i.test(hex)) {
-      if (hex === "#22c55e") return "green";
-      if (hex === "#9ca3af") return "gray";
-      if (hex === "#111827") return "black";
-      if (hex === "#ffffff") return "white";
-      if (hex === "#3b82f6") return "blue";
-      if (hex === "#ec4899") return "pink";
-    }
-
-    // rgb(...) ou "r, g, b"
-    const m = s.match(/(\d{1,3})[,\s]+(\d{1,3})[,\s]+(\d{1,3})/);
-    if (m) {
-      const key = `${Math.min(255, +m[1])},${Math.min(255, +m[2])},${Math.min(255, +m[3])}`;
-      if (key === "34,197,94") return "green";
-      if (key === "156,163,175") return "gray";
-      if (key === "17,24,39") return "black";
-      if (key === "255,255,255") return "white";
-      if (key === "59,130,246") return "blue";
-      if (key === "236,72,153") return "pink";
-    }
-
-    return "gray";
-  }
-
-  const enabledKey = useMemo(
-    () => (selectedId ? `roasbot:${realBotId}:${selectedId}:enabled` : ""),
-    [realBotId, selectedId]
-  );
-  const [enabled, setEnabled] = useState(false);
-  const [activeStrategies, setActiveStrategies] = useState<number>(0);
-  const [showStrategyEditor, setShowStrategyEditor] = useState(false);
-
   /* ====== Ler lista ====== */
   useEffect(() => {
     try {
@@ -440,23 +366,9 @@ export default function RobotManager({ botId, bot, casa }: Props) {
     } catch {}
   }, [hydrated, robots, storageKey]);
 
-  /* ====== Flag ligado/desligado ====== */
-  useEffect(() => {
-    if (!enabledKey) return;
-    try {
-      const raw = localStorage.getItem(enabledKey);
-      setEnabled(raw === "true");
-    } catch {}
-  }, [enabledKey]);
-  useEffect(() => {
-    if (!enabledKey) return;
-    try {
-      localStorage.setItem(enabledKey, String(enabled));
-    } catch {}
-  }, [enabled, enabledKey]);
-
   const selected = robots.find((r) => r.id === selectedId) ?? null;
 
+  const [activeStrategies, setActiveStrategies] = useState<number>(0);
   useEffect(() => {
     if (!selected) {
       setActiveStrategies(0);
@@ -466,35 +378,56 @@ export default function RobotManager({ botId, bot, casa }: Props) {
     setActiveStrategies(count);
   }, [selected?.id, selected?.strategies]);
 
-  // --- Draft de estratégia (AGORA dentro do componente) ---
+  // Draft de estratégia
   const [newDraft, setNewDraft] = useState<DraftStrategy | null>(null);
   const [savingDraft, setSavingDraft] = useState(false);
 
-  async function saveDraft() {
-    if (!newDraft) return;
-    if (!newDraft.name.trim()) {
-      alert("Dê um nome para a estratégia.");
-      return;
-    }
-    setSavingDraft(true);
-    try {
-      const r = await fetch("/api/strategies", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(newDraft),
-      });
-      const j = await r.json();
-      if (!r.ok || !j.ok) throw new Error(j?.error || "Erro ao salvar");
-      setNewDraft(null);
-      location.reload();
-    } catch (e: any) {
-      alert(e?.message || String(e));
-    } finally {
-      setSavingDraft(false);
-    }
-  }
+  // ordenação alfabética
+  const sortByName = (a: Strategy, b: Strategy) =>
+    a.name.localeCompare(b.name, "pt-BR", { sensitivity: "base" });
 
-  /** ===== CRUD ===== */
+  async function saveDraft() {
+  if (!newDraft || !selected) return;
+  if (!newDraft.name.trim()) {
+    alert("Dê um nome para a estratégia.");
+    return;
+  }
+  setSavingDraft(true);
+  try {
+    // monte apenas os campos compatíveis com a API
+    const payload = {
+      robotId: selected.id,
+      name: newDraft.name,
+      startHour: newDraft.startHour,
+      endHour: newDraft.endHour,
+      winAt: newDraft.winAt,
+      mgCount: newDraft.mgCount,
+      pattern: newDraft.pattern,
+      enabled: newDraft.enabled,
+      blueMin: newDraft.blueMin,
+      pinkMax: newDraft.pinkMax,
+      // messages: (mapeie/caste se realmente precisar enviar)
+    } satisfies Partial<Strategy> & { robotId: string; name: string };
+
+    const created = await createStrategyAPI(payload);
+
+    setRobots((prev) =>
+      prev.map((r) =>
+        r.id === selected.id
+          ? { ...r, strategies: [...(r.strategies ?? []), created].sort(sortByName) }
+          : r
+      )
+    );
+    setNewDraft(null);
+  } catch (e: any) {
+    alert(e?.message || String(e));
+  } finally {
+    setSavingDraft(false);
+  }
+}
+
+
+  /** ===== CRUD de Robot (local list) ===== */
   function addRobot() {
     const newRobot: Robot = {
       id: crypto.randomUUID(),
@@ -531,42 +464,49 @@ export default function RobotManager({ botId, bot, casa }: Props) {
     setSelectedId(copy.id);
   }
 
-  /** ===== Estratégias ===== */
-  function setStrategies(next: PanelStrategy[]) {
+  /** ===== Estratégias (helpers) ===== */
+  function setStrategies(next: Strategy[]) {
     const converted: Strategy[] = next.map((s) => ({
-      id: s.id,
-      name: s.name,
-      startHour: s.startHour,
-      endHour: s.endHour,
-      mgCount: s.mgCount,
-      enabled: s.enabled,
-      winAt: s.winAt,
-      pattern: (s.pattern as Array<string | Color>).map<Color>((c) => normalizeColor(c)),
-      messages: s.messages,
+      ...s,
+      pattern: (s.pattern as Array<string>).map((c) => normalizeColor(c)),
     }));
-    updateRobot({ strategies: converted });
+    updateRobot({ strategies: converted.sort(sortByName) });
   }
-  function duplicateStrategy(id: string) {
-    if (!selected) return;
-    const list = selected.strategies ?? [];
-    const base = list.find((s) => s.id === id);
-    if (!base) return;
-    const copy: Strategy = { ...base, id: crypto.randomUUID(), name: `${base.name} (cópia)` };
-    const next = [copy, ...list];
-    updateRobot({ strategies: next });
-    if (copy.enabled) setActiveStrategies(next.filter((s) => s.enabled).length);
+
+  async function handleToggleStrategy(id: string, value: boolean) {
+    try {
+      const updated = await patchStrategyAPI(id, { enabled: value });
+      setRobots((prev) =>
+        prev.map((r) =>
+          r.id === selected?.id
+            ? {
+                ...r,
+                strategies: r.strategies
+                  .map((s) => (s.id === id ? { ...s, enabled: updated.enabled } : s))
+                  .sort(sortByName),
+              }
+            : r
+        )
+      );
+    } catch (e: any) {
+      alert(e?.message || "Falha ao alternar estratégia.");
+    }
   }
-  function deleteStrategy(id: string) {
-    if (!selected) return;
-    const next = (selected.strategies ?? []).filter((s) => s.id !== id);
-    updateRobot({ strategies: next });
-    setActiveStrategies(next.filter((s) => s.enabled).length);
-  }
-  function toggleStrategy(id: string, value: boolean) {
-    if (!selected) return;
-    const next = (selected.strategies ?? []).map((s) => (s.id === id ? { ...s, enabled: value } : s));
-    updateRobot({ strategies: next });
-    setActiveStrategies(next.filter((s) => s.enabled).length);
+
+  async function handleDeleteStrategy(id: string) {
+    if (!confirm("Tem certeza que deseja excluir esta estratégia?")) return;
+    try {
+      await deleteStrategyAPI(id);
+      setRobots((prev) =>
+        prev.map((r) =>
+          r.id === selected?.id
+            ? { ...r, strategies: r.strategies.filter((s) => s.id !== id).sort(sortByName) }
+            : r
+        )
+      );
+    } catch (e: any) {
+      alert(e?.message || "Falha ao excluir estratégia.");
+    }
   }
 
   /** ===== Ações de teste ===== */
@@ -663,30 +603,33 @@ export default function RobotManager({ botId, bot, casa }: Props) {
   return (
     <div className="space-y-6">
       {/* Controles superiores */}
-      <div className="rounded-xl border bg-white p-4">
+      <div className="rounded-xl border bg-white p-4 shadow-sm">
         <div className="grid gap-4 md:grid-cols-4 items-end">
           <div>
-            <label className="block text-sm font-medium mb-1">Jogo</label>
+            <label className="block text-sm font-semibold mb-1">Jogo</label>
             <select value={gameFromId} disabled className="w-full rounded-lg border px-3 py-2 bg-gray-50">
               <option value={gameFromId}>{gameLabel}</option>
             </select>
           </div>
 
           <div>
-            <label className="block text-sm font-medium mb-1">Casa</label>
+            <label className="block text-sm font-semibold mb-1">Casa</label>
             <select value={casaFromId} disabled className="w-full rounded-lg border px-3 py-2 bg-gray-50">
               <option value={casaFromId}>{casaLabel}</option>
             </select>
           </div>
 
           <div className="flex justify-center">
-            <button onClick={addRobot} className="h-[38px] px-3 py-2 rounded-lg bg-blue-600 text-white hover:bg-blue-700">
+            <button
+              onClick={addRobot}
+              className="h-[38px] px-3 py-2 rounded-lg bg-blue-600 text-white hover:bg-blue-700 shadow-sm"
+            >
               + Novo Robot
             </button>
           </div>
 
           <div>
-            <label className="block text-sm font-medium mb-1">Robot</label>
+            <label className="block text-sm font-semibold mb-1">Robot</label>
             <select
               value={selectedId ?? ""}
               onChange={(e) => setSelectedId(e.target.value || null)}
@@ -705,20 +648,16 @@ export default function RobotManager({ botId, bot, casa }: Props) {
 
       {/* STATUS + CONFIGURAÇÕES */}
       {selected && (
-        <div className="rounded-xl border bg-white p-4">
+        <div className="rounded-xl border bg-white p-4 shadow-sm">
           <div className="grid lg:grid-cols-3 gap-6">
             {/* Status */}
             <div className="lg:col-span-1">
-              <h3 className="font-medium mb-2">Status</h3>
-              <div className="rounded-lg border p-4">
+              <h3 className="font-bold mb-2">Status</h3>
+              <div className="rounded-xl border p-4 bg-gradient-to-b from-gray-50 to-white">
                 <div className="text-sm text-gray-500">Robô selecionado</div>
                 <div className="text-lg font-semibold">{selected.name}</div>
 
                 <div className="mt-4 grid grid-cols-2 gap-4 text-sm">
-                  <div>
-                    <div className="text-gray-500">Estado</div>
-                    <div className="font-medium">{enabled ? "Ligado ✅" : "Desligado ❌"}</div>
-                  </div>
                   <div>
                     <div className="text-gray-500">Estratégias ativas</div>
                     <div className="font-medium">{activeStrategies}</div>
@@ -729,25 +668,34 @@ export default function RobotManager({ botId, bot, casa }: Props) {
                   </div>
                 </div>
 
-                <div className="mt-4 flex items-center gap-2">
+                <div className="mt-4 flex items-center gap-3">
                   <span className="text-sm text-gray-600">Status</span>
-                  <label className="flex items-center gap-2 text-sm">
-                    <input
-                      type="checkbox"
-                      checked={!!selected?.enabled}
-                      onChange={async (e) => {
-                        try {
-                          await patchRobotAPI(selected.id, { enabled: e.target.checked });
-                          setRobots((rs) =>
-                            rs.map((r) => (r.id === selected.id ? { ...r, enabled: e.target.checked } : r))
-                          );
-                        } catch (err: any) {
-                          alert(err?.message || "Falha ao atualizar robot");
-                        }
-                      }}
+                  {/* Switch */}
+                  <button
+                    type="button"
+                    aria-pressed={!!selected.enabled}
+                    onClick={async () => {
+                      try {
+                        const next = !selected.enabled;
+                        await patchRobotAPI(selected.id, { enabled: next });
+                        setRobots((rs) =>
+                          rs.map((r) => (r.id === selected.id ? { ...r, enabled: next } : r))
+                        );
+                      } catch (err: any) {
+                        alert(err?.message || "Falha ao atualizar robot");
+                      }
+                    }}
+                    className={`relative inline-flex h-8 w-16 items-center justify-center rounded-full transition
+                      ${selected.enabled ? "bg-green-500" : "bg-gray-300"}`}
+                    title={selected.enabled ? "Desligar" : "Ligar"}
+                  >
+                    <span
+                      className={`absolute left-1 top-1 h-6 w-6 rounded-full bg-white shadow transition-transform
+                        ${selected.enabled ? "translate-x-8" : "translate-x-0"}`}
                     />
-                    <span className="ml-1">{selected?.enabled ? "Ligado" : "Desligado"}</span>
-                  </label>
+                    <span className="sr-only">Alternar</span>
+                  </button>
+                  <span className="text-sm">{selected.enabled ? "Ligado" : "Desligado"}</span>
                 </div>
 
                 <div className="mt-4 flex gap-2 flex-wrap">
@@ -769,8 +717,8 @@ export default function RobotManager({ botId, bot, casa }: Props) {
 
             {/* Configurações */}
             <div className="lg:col-span-2">
-              <h3 className="font-medium mb-2">Configurações do Robô</h3>
-              <div className="rounded-lg border p-4">
+              <h3 className="font-bold mb-2">Configurações do Robô</h3>
+              <div className="rounded-xl border p-4 bg-white">
                 <div className="grid md:grid-cols-3 gap-4">
                   <Field label="Nome" type="text" value={selected.name} onChange={(v) => updateRobot({ name: v })} />
                   <Field label="Início" type="time" value={selected.startHour} onChange={(v) => updateRobot({ startHour: v })} />
@@ -785,6 +733,22 @@ export default function RobotManager({ botId, bot, casa }: Props) {
                   <Field label="Chat ID" type="text" value={selected.chatId} onChange={(v) => updateRobot({ chatId: v })} />
                   <div className="hidden md:block" />
                 </div>
+
+                <div className="mt-4 flex flex-wrap gap-2">
+                  <button
+                    onClick={handlePreviewWin}
+                    className="rounded-lg bg-emerald-600 px-4 py-2 text-sm text-white hover:bg-emerald-700"
+                  >
+                    Pré-visualizar mensagem de WIN
+                  </button>
+                  <button
+                    onClick={handleSendWinTest}
+                    disabled={sending}
+                    className="rounded-lg bg-black px-4 py-2 text-sm text-white hover:opacity-90 disabled:opacity-60"
+                  >
+                    {sending ? "Enviando..." : "Enviar WIN (teste)"}
+                  </button>
+                </div>
               </div>
             </div>
           </div>
@@ -793,9 +757,9 @@ export default function RobotManager({ botId, bot, casa }: Props) {
 
       {/* ESTRATÉGIAS */}
       {selected && (
-        <div className="rounded-xl border bg-white p-4">
+        <div className="rounded-xl border bg-white p-4 shadow-sm">
           <div className="flex items-center justify-between mb-3">
-            <h3 className="font-medium">Estratégia</h3>
+            <h3 className="font-bold">Estratégias</h3>
 
             <div className="flex items-center gap-2">
               <button
@@ -805,7 +769,7 @@ export default function RobotManager({ botId, bot, casa }: Props) {
                     alert("Selecione um robô primeiro.");
                     return;
                   }
-                  setNewDraft(makeEmptyDraft(selected.id)); // abre o editor inline (sem prompt)
+                  setNewDraft(makeEmptyDraft(selected.id));
                 }}
               >
                 + Nova estratégia
@@ -813,9 +777,9 @@ export default function RobotManager({ botId, bot, casa }: Props) {
             </div>
           </div>
 
-          {/* Editor inline de NOVA estratégia (AGORA DENTRO do componente) */}
+          {/* Editor inline de NOVA estratégia */}
           {newDraft && (
-            <div className="mb-4 rounded-2xl border bg-white p-4 shadow-sm">
+            <div className="mb-4 rounded-2xl border bg-white p-4 shadow-sm ring-1 ring-blue-100">
               <div className="text-lg font-semibold mb-3">Nova estratégia (rascunho)</div>
 
               <div className="grid gap-3 md:grid-cols-3">
@@ -836,19 +800,13 @@ export default function RobotManager({ botId, bot, casa }: Props) {
                     value={newDraft.startHour}
                     onChange={(e) => setNewDraft({ ...newDraft, startHour: e.target.value })}
                     placeholder="00:00"
+                    type="time"
                   />
                 </label>
 
-                <label className="text-sm">
-                  Fim
-                  <input
-                    className="mt-1 w-full rounded-lg border px-3 py-2 text-sm"
-                    value={newDraft.endHour}
-                    onChange={(e) => setNewDraft({ ...newDraft, endHour: e.target.value })}
-                    placeholder="23:59"
-                  />
-                </label>
+                
 
+                {/* Vitória em + MG lado a lado */}
                 <label className="text-sm">
                   Vitória em
                   <input
@@ -880,7 +838,44 @@ export default function RobotManager({ botId, bot, casa }: Props) {
                 />
               </div>
 
-              <div className="mt-4 flex gap-2">
+              {/* Azul/Rosa abaixo do editor */}
+              <div className="mt-4 grid gap-3 md:grid-cols-2">
+                <label className="text-sm">
+                  Azul (mín.)
+                  <input
+                    type="number"
+                    step="1.00"
+                    className="mt-1 w-full rounded-lg border px-3 py-2 text-sm"
+                    value={newDraft.blueMin ?? ""}
+                    onChange={(e) =>
+                      setNewDraft({
+                        ...newDraft,
+                        blueMin: e.target.value === "" ? undefined : Number(e.target.value),
+                      })
+                    }
+                    placeholder="ex.: 2.00"
+                  />
+                </label>
+
+                <label className="text-sm">
+                  Rosa (máx.)
+                  <input
+                    type="number"
+                    step="1.00"
+                    className="mt-1 w-full rounded-lg border px-3 py-2 text-sm"
+                    value={newDraft.pinkMax ?? ""}
+                    onChange={(e) =>
+                      setNewDraft({
+                        ...newDraft,
+                        pinkMax: e.target.value === "" ? undefined : Number(e.target.value),
+                      })
+                    }
+                    placeholder="ex.: 1.20"
+                  />
+                </label>
+              </div>
+
+              <div className="mt-4 flex gap-2 justify-end">
                 <button
                   onClick={() => setNewDraft(null)}
                   className="rounded-lg border px-3 py-1.5 text-sm hover:bg-gray-50"
@@ -890,7 +885,7 @@ export default function RobotManager({ botId, bot, casa }: Props) {
                 </button>
                 <button
                   onClick={saveDraft}
-                  className="rounded-lg bg-black px-4 py-1.5 text-sm text-white hover:opacity-90 disabled:opacity-60"
+                  className="rounded-lg bg-blue-600 px-4 py-1.5 text-sm text-white hover:bg-blue-700 disabled:opacity-60"
                   disabled={savingDraft}
                 >
                   {savingDraft ? "Salvando..." : "Salvar estratégia"}
@@ -899,34 +894,73 @@ export default function RobotManager({ botId, bot, casa }: Props) {
             </div>
           )}
 
-          <StrategiesPanel
-            key={selected.id}
-            bot={gameFromId}
-            casa={casaFromId}
-            robotId={selected.id}
-            strategies={(selected.strategies ?? []).map<PanelStrategy>((s) => ({
-              id: s.id,
-              name: s.name,
-              startHour: s.startHour,
-              endHour: s.endHour,
-              mgCount: s.mgCount,
-              enabled: s.enabled,
-              winAt: s.winAt,
-              pattern: normalizePattern(s.pattern).map<Color>((c) => normalizeColor(c)),
-              messages: s.messages,
-            }))}
-            onChange={(next) => setStrategies(next)}
-            onDuplicate={duplicateStrategy}
-            onDelete={deleteStrategy}
-            onToggle={toggleStrategy}
-            onSummaryChange={(s) => setActiveStrategies(s.active)}
-            hideEditor={!showStrategyEditor}
-            showCloseButton={true}
-            onCloseEditor={() => setShowStrategyEditor(false)}
-          />
+          {/* Lista de estratégias (ordenadas A→Z) */}
+          <div className="space-y-3">
+            {(selected.strategies ?? [])
+            .slice()
+            .sort(sortByName)
+            .map((s) => (
+              <StrategyRow
+                key={s.id}
+                strategy={s}
+                onToggle={(val) => handleToggleStrategy(s.id, val)}
+                onDelete={() => handleDeleteStrategy(s.id)}
+                onSave={async (patch) => {
+                  try {
+                    // 1) tenta atualizar
+                    const updated = await patchStrategyAPI(s.id, patch);
+                    setRobots((prev) =>
+                      prev.map((r) =>
+                        r.id === selected.id
+                          ? {
+                              ...r,
+                              strategies: r.strategies
+                                .map((it) => (it.id === s.id ? { ...it, ...updated } : it))
+                                .sort(sortByName),
+                            }
+                          : r
+                      )
+                    );
+                  } catch (e: any) {
+                    // 2) se não encontrou no banco, cria e substitui a antiga no estado
+                    if (e?.status === 404 || /not found/i.test(e?.message)) {
+                      const created = await createStrategyAPI({
+                        robotId: selected.id,
+                        name: patch.name ?? s.name,
+                        startHour: patch.startHour ?? s.startHour,
+                        endHour: patch.endHour ?? s.endHour,
+                        winAt: patch.winAt ?? s.winAt,
+                        mgCount: patch.mgCount ?? s.mgCount,
+                        blueMin: patch.blueMin ?? s.blueMin,
+                        pinkMax: patch.pinkMax ?? s.pinkMax,
+                        pattern: s.pattern,
+                        enabled: s.enabled,
+                      });
 
-          {/* ===== ABA RECOLHÍVEL: Legendas + Variáveis ===== */}
-          <details className="mt-4 rounded-xl border bg-white">
+                      setRobots((prev) =>
+                        prev.map((r) =>
+                          r.id === selected.id
+                            ? {
+                                ...r,
+                                strategies: r.strategies
+                                .map((it) => (it.id === s.id ? created : it)) // substitui a antiga pelo novo registro
+                                .sort(sortByName),
+                              }
+                            : r
+                      )
+                    );
+                    alert("A estratégia não existia no banco. Criei uma nova e substituí.");
+                  } else {
+                    alert(e?.message || "Falha ao salvar estratégia.");
+                  }
+                }
+              }}
+            />
+          ))}
+      </div>
+      
+          {/* Ajuda */}
+          <details className="mt-6 rounded-xl border bg-white">
             <summary className="cursor-pointer select-none list-none rounded-xl px-4 py-3 text-sm font-semibold hover:bg-gray-50 flex items-center justify-between">
               Ajuda: legendas e variáveis
               <span className="text-xs text-gray-500 ml-3">(clique para abrir/fechar)</span>
@@ -975,6 +1009,245 @@ export default function RobotManager({ botId, bot, casa }: Props) {
   );
 }
 
+/* ---------- StrategyRow (resumo + edição compacta) ---------- */
+function StrategyRow({
+  strategy,
+  onSave,
+  onToggle,
+  onDelete,
+}: {
+  strategy: Strategy;
+  onSave: (patch: Partial<Strategy>) => Promise<void>;
+  onToggle: (value: boolean) => void;
+  onDelete: () => void;
+}) {
+  const [editing, setEditing] = useState(false);
+
+  const [form, setForm] = useState({
+    name: strategy.name,
+    startHour: strategy.startHour,
+    endHour: strategy.endHour,
+    winAt: String(strategy.winAt),
+    mgCount: String(strategy.mgCount),
+    blueMin: strategy.blueMin ?? "",
+    pinkMax: strategy.pinkMax ?? "",
+  });
+
+  async function handleSave() {
+    const patch: Partial<Strategy> = {
+      name: form.name.trim(),
+      startHour: form.startHour,
+      endHour: form.endHour,
+      winAt: Number(form.winAt || 0),
+      mgCount: Number(form.mgCount || 0),
+      // blueMin/pinkMax ficam no UI; enviados apenas quando backend suportar
+      // blueMin: form.blueMin === "" ? undefined : Number(form.blueMin),
+      // pinkMax: form.pinkMax === "" ? undefined : Number(form.pinkMax),
+    };
+    await onSave(patch);
+    setEditing(false);
+  }
+
+  const colorClass = (c: string) =>
+    ({
+      green: "bg-emerald-500",
+      gray: "bg-gray-400",
+      black: "bg-gray-900",
+      white: "bg-white ring-1 ring-gray-300",
+      blue: "bg-blue-500",
+      pink: "bg-pink-500",
+    }[normalizeColor(c)]);
+
+  return (
+    <div className="rounded-2xl border bg-white ring-1 ring-gray-100 shadow-sm transition">
+      {/* ——— Resumo minimalista ——— */}
+      {!editing && (
+        <div className="flex items-center justify-between gap-3 p-3 hover:bg-gray-50">
+          <div className="flex items-center gap-3 min-w-0">
+            <span
+              className={`h-2.5 w-2.5 rounded-full ${
+                strategy.enabled ? "bg-green-500" : "bg-gray-300"
+              }`}
+              aria-hidden
+            />
+            <div className="min-w-0">
+              <div className="truncate font-semibold">{strategy.name}</div>
+
+              <div className="mt-1 flex flex-wrap items-center gap-1.5 text-xs">
+                <span className="rounded-md bg-gray-100 px-2 py-0.5">
+                  ⏱ {strategy.startHour}–{strategy.endHour}
+                </span>
+                <span className="rounded-md px-2 py-0.5 ring-1 bg-emerald-50 text-emerald-700 ring-emerald-200">
+                  Vitória em {strategy.winAt}
+                </span>
+                <span className="rounded-md px-2 py-0.5 ring-1 bg-indigo-50 text-indigo-700 ring-indigo-200">
+                  MG {strategy.mgCount}
+                </span>
+                {strategy.blueMin != null && (
+                  <span className="rounded-md px-2 py-0.5 ring-1 bg-blue-50 text-blue-700 ring-blue-200">
+                    Azul ≥ {Number(strategy.blueMin).toFixed(2)}
+                  </span>
+                )}
+                {strategy.pinkMax != null && (
+                  <span className="rounded-md px-2 py-0.5 ring-1 bg-pink-50 text-pink-700 ring-pink-200">
+                    Rosa ≤ {Number(strategy.pinkMax).toFixed(2)}
+                  </span>
+                )}
+              </div>
+
+              {/* Fileira de quadradinhos do pattern */}
+              <div className="mt-2 hidden md:flex items-center gap-1">
+                {(strategy.pattern ?? []).slice(0, 28).map((c, i) => (
+                  <span key={i} className={`h-3 w-3 rounded ${colorClass(c)}`} />
+                ))}
+                {strategy.pattern && strategy.pattern.length > 28 && (
+                  <span className="text-[10px] text-gray-400">
+                    +{strategy.pattern.length - 28}
+                  </span>
+                )}
+              </div>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2 shrink-0">
+            {/* switch */}
+            <button
+              type="button"
+              aria-pressed={strategy.enabled}
+              onClick={() => onToggle(!strategy.enabled)}
+              className={`relative inline-flex h-6 w-12 items-center rounded-full transition ${
+                strategy.enabled ? "bg-green-500" : "bg-gray-300"
+              }`}
+              title={strategy.enabled ? "Desligar estratégia" : "Ligar estratégia"}
+            >
+              <span
+                className={`h-5 w-5 rounded-full bg-white shadow absolute left-1 transition-transform ${
+                  strategy.enabled ? "translate-x-6" : "translate-x-0"
+                }`}
+              />
+            </button>
+
+            <button
+              onClick={() => setEditing(true)}
+              className="rounded-lg border px-3 py-1.5 text-sm hover:bg-gray-50"
+            >
+              Editar
+            </button>
+            <button
+              onClick={onDelete}
+              className="rounded-lg bg-red-600 px-3 py-1.5 text-sm text-white hover:bg-red-700"
+            >
+              Excluir
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ——— Edição compacta ——— */}
+      {editing && (
+        <div className="p-4 border-t">
+          {/* Grid compacto - sem barra superior duplicada de botões */}
+          <div className="grid items-end gap-3 md:grid-cols-6">
+            <MiniField
+              label="Nome"
+              value={form.name}
+              onChange={(v) => setForm((f) => ({ ...f, name: v }))}
+              className="md:col-span-3"
+            />
+            <MiniField
+              label="Início"
+              type="time"
+              value={form.startHour}
+              onChange={(v) => setForm((f) => ({ ...f, startHour: v }))}
+            />
+            <MiniField
+              label="Fim"
+              type="time"
+              value={form.endHour}
+              onChange={(v) => setForm((f) => ({ ...f, endHour: v }))}
+            />
+        </div>
+
+        {/* Vitória em + Gales lado a lado */}
+        <div className="md:col-span-8">
+          <div className="flex flex-wrap items-end gap-6">
+            {/* Vitória em */}
+            <div>
+              <label className="mb-1 block text-xs font-semibold">Vitória em</label>
+              <div className="flex items-center gap-2">
+                <input
+                  type="number"
+                  min={1}
+                  className="h-9 w-20 rounded-md border px-2 text-sm ring-1 ring-emerald-300 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                  value={form.winAt}
+                  onChange={(e) => setForm((f) => ({ ...f, winAt: e.target.value }))}
+                />
+              </div>
+            </div>
+
+            {/* Gales */}
+            <div>
+              <label className="mb-1 block text-xs font-semibold">Gales</label>
+              <input
+                type="number"
+                min={0}
+                className="h-9 w-20 rounded-md border px-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                value={form.mgCount}
+                onChange={(e) => setForm((f) => ({ ...f, mgCount: e.target.value }))}
+              />
+            </div>
+          </div>
+        </div>
+
+        {/* Editor visual (pattern/mensagens) */}
+        <div className="mt-4">
+          <StrategyEditor strategy={{ ...strategy, active: strategy.enabled }} size={12} />
+        </div>
+
+          {/* Azul + Rosa (lado a lado) */}
+          <div className="mt-4">
+            <div className="flex flex-nowrap items-end gap-4">
+              <MiniField
+                label="Azul (mín.)"
+                type="number"
+                step="0.01"
+                value={String(form.blueMin)}
+                onChange={(v) => setForm((f) => ({ ...f, blueMin: v }))}
+                w="w-24"
+              />
+              <MiniField
+                label="Rosa (máx.)"
+                type="number"
+                step="0.01"
+                value={String(form.pinkMax)}
+                onChange={(v) => setForm((f) => ({ ...f, pinkMax: v }))}
+                w="w-24"
+              />
+            </div>
+          </div>
+
+
+          {/* Somente botões do canto inferior direito */}
+          <div className="mt-4 flex justify-end gap-2">
+            <button
+              onClick={() => setEditing(false)}
+              className="rounded-lg border px-3 py-1.5 text-sm hover:bg-gray-50"
+            >
+              Cancelar
+            </button>
+            <button
+              onClick={handleSave}
+              className="rounded-lg bg-blue-600 px-4 py-1.5 text-sm text-white hover:bg-blue-700"
+            >
+              Salvar
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 /* ---------- UI helpers ---------- */
 function Field({
   label,
@@ -989,7 +1262,7 @@ function Field({
 }) {
   return (
     <div>
-      <label className="block text-sm font-medium mb-1">{label}</label>
+      <label className="block text-sm font-semibold mb-1">{label}</label>
       <input
         type={type}
         value={value}
@@ -997,5 +1270,59 @@ function Field({
         className="w-full rounded-lg border px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
       />
     </div>
+  );
+}
+
+function MiniField({
+  label,
+  value,
+  onChange,
+  type = "text",
+  step,
+  w = "w-full",
+  className = "",
+}: {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  type?: "text" | "time" | "number";
+  step?: string;
+  w?: string;
+  className?: string;
+}) {
+  return (
+    <div className={className}>
+      <label className="mb-1 block text-xs font-semibold">{label}</label>
+      <input
+        type={type}
+        step={step}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className={`h-9 ${w} rounded-md border px-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500`}
+      />
+    </div>
+  );
+}
+
+function VarChip({ item }: { item: VarItem }) {
+  const [copied, setCopied] = useState(false);
+  async function copy() {
+    try {
+      await navigator.clipboard?.writeText(item.code);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1200);
+    } catch {}
+  }
+  return (
+    <button
+      type="button"
+      onClick={copy}
+      className="flex w-full items-start gap-3 rounded-lg border bg-white p-3 text-left hover:bg-gray-50"
+      title={`Clique para copiar ${item.code}`}
+    >
+      <code className="font-mono text-xs px-1 py-0.5 rounded bg-gray-100 border">{item.code}</code>
+      <span className="text-sm text-gray-700">{item.desc}</span>
+      <span className="ml-auto text-[11px] text-gray-400">{copied ? "copiado!" : "copiar"}</span>
+    </button>
   );
 }

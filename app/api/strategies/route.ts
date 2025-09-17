@@ -1,79 +1,75 @@
 // app/api/strategies/route.ts
 import { NextResponse } from "next/server";
-import { PrismaClient, Prisma } from "@prisma/client";
+import { prisma } from "@/lib/prisma";
+import type { Prisma } from "@prisma/client";
 
-const prisma = new PrismaClient();
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
 
-function normalizePattern(p: any): any[] {
-  if (Array.isArray(p)) return p;
-  if (p == null) return [];
-  if (typeof p === "string") {
-    try {
-      const parsed = JSON.parse(p);
-      if (Array.isArray(parsed)) return parsed;
-      if (typeof parsed === "string") return [parsed];
-    } catch {
-      return [p];
-    }
-  }
-  if (typeof p === "object") {
-    if (Array.isArray((p as any)["pattern-list"])) return (p as any)["pattern-list"];
-    if (Array.isArray((p as any).colors)) return (p as any).colors;
-    return Object.values(p).flat().filter((x) => typeof x === "string");
-  }
-  return [];
+const JSON_HEADERS = {
+  "Content-Type": "application/json",
+  "Cache-Control": "no-store",
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
+  "Access-Control-Allow-Headers": "content-type,authorization,x-api-key,x-requested-with",
+};
+const json = (status: number, data: unknown) =>
+  new NextResponse(JSON.stringify(data, (_k, v) => (typeof v === "bigint" ? Number(v) : v)), {
+    status,
+    headers: JSON_HEADERS,
+  });
+
+export function OPTIONS() {
+  return new NextResponse(null, { status: 204, headers: JSON_HEADERS });
 }
 
+// GET /api/strategies?botId=...  (lista)  |  GET /api/strategies?id=... (1 item)
+export async function GET(req: Request) {
+  const { searchParams } = new URL(req.url);
+  const botId = searchParams.get("botId");
+  const id = searchParams.get("id");
+
+  if (id) {
+    const one = await prisma.strategy.findUnique({ where: { id } });
+    return json(200, { ok: true, data: one });
+  }
+
+  if (botId) {
+    const list = await prisma.strategy.findMany({
+      where: { robotId: botId },
+      orderBy: { createdAt: "desc" },
+    });
+    return json(200, { ok: true, data: list });
+  }
+
+  return json(400, { ok: false, error: "Informe ?botId= para listar ou ?id= para buscar 1" });
+}
+
+// POST /api/strategies  { robotId, name?, active?, startHour?, endHour?, pattern?, winAt?, mgCount?, ... }
 export async function POST(req: Request) {
   try {
     const body = await req.json();
+    const robotId: string | undefined = body?.robotId;
+    if (!robotId) return json(400, { ok: false, error: "robotId ausente" });
 
-    const {
-      robotId,
-      name,
-      startHour = "00:00",
-      endHour = "23:59",
-      winAt = 3,
-      mgCount = 0,
-      pattern = [],
-      messages = {},
-      enabled = true,
-    } = body ?? {};
+    const payload: Prisma.StrategyCreateInput = {
+      robot: { connect: { id: robotId } },
+      name: typeof body?.name === "string" ? body.name : "Nova estratégia",
+      active: typeof body?.active === "boolean" ? body.active : true,
+      startHour: typeof body?.startHour === "string" ? body.startHour : "00:00",
+      endHour: typeof body?.endHour === "string" ? body.endHour : "23:59",
+      pattern: Array.isArray(body?.pattern) ? (body.pattern as Prisma.InputJsonValue) : ([] as unknown as Prisma.InputJsonValue),
+      winAt: Number.isFinite(+body?.winAt) ? Number(body.winAt) : 1,
+      mgCount: Number.isFinite(+body?.mgCount) ? Number(body.mgCount) : 0,
+      blueThreshold: body?.blueThreshold ?? null,
+      pinkThreshold: body?.pinkThreshold ?? null,
+      messages: (body?.messages ?? {}) as Prisma.InputJsonValue,
+    };
 
-    if (!robotId || !name) {
-      return NextResponse.json({ ok: false, error: "robotId e name são obrigatórios" }, { status: 400 });
-    }
-
-    const created = await prisma.strategy.create({
-      data: {
-        robotId,
-        name,
-        startHour,
-        endHour,
-        winAt: Number(winAt),
-        mgCount: Number(mgCount),
-        enabled: Boolean(enabled),
-        // salva como JSON
-        pattern: normalizePattern(pattern) as unknown as Prisma.InputJsonValue,
-        messages: messages as Prisma.InputJsonValue,
-      },
-      select: {
-        id: true,
-        robotId: true,
-        name: true,
-        startHour: true,
-        endHour: true,
-        winAt: true,
-        mgCount: true,
-        enabled: true,
-        pattern: true,
-        messages: true,
-        createdAt: true,
-      },
-    });
-
-    return NextResponse.json({ ok: true, data: created });
+    const created = await prisma.strategy.create({ data: payload });
+    return json(201, { ok: true, data: created });
   } catch (e: any) {
-    return NextResponse.json({ ok: false, error: e?.message || "erro ao criar estratégia" }, { status: 500 });
+    return json(400, { ok: false, error: e?.message || "erro ao criar estratégia" });
   }
 }

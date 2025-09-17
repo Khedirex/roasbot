@@ -12,11 +12,16 @@ enum Role {
   ADMIN
 }
 
+/**
+ * =========================
+ * Autenticação / Usuários
+ * =========================
+ */
 model User {
   id        String   @id @default(cuid())
   name      String?
   email     String   @unique
-  password  String   // hash (bcryptjs)
+  password  String // hash (bcryptjs)
   role      Role     @default(USER)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -24,109 +29,150 @@ model User {
   @@index([role, createdAt])
 }
 
+/**
+ * =========================
+ * Ingest de eventos crus
+ * =========================
+ */
 model IngestEvent {
   id        String   @id @default(cuid())
-  game      String   // ex: "aviator"
-  casa      String   // ex: "1win"
+  game      String // ex: "aviator"
+  casa      String // ex: "1win"
   value     Float
-  ts        BigInt   // timestamp do evento (epoch ms)
-  ip        String?  // opcional, IP de origem
-  userAgent String?  // opcional, user-agent
-  createdAt DateTime @default(now()) // momento de inserção
+  ts        BigInt // epoch ms
+  ip        String?
+  userAgent String?
+  createdAt DateTime @default(now())
 
   @@index([game, casa, createdAt])
   @@index([game, casa, ts])
 }
 
+/**
+ * =========================
+ * Sinais brutos de Aviator
+ * =========================
+ */
 model AviatorSignal {
   id        Int       @id @default(autoincrement())
   casa      String
-  rule      String    // ex.: "spike" | "drawdown"
+  rule      String // "spike" | "drawdown" | ...
   value     Float
-  ts        BigInt    // timestamp (ms) do ponto que gerou o sinal
+  ts        BigInt
   payload   Json?
-  status    String    // "pending" | "sent" | "skipped"
+  status    String // "pending" | "sent" | "skipped"
   sentAt    DateTime?
   createdAt DateTime  @default(now())
 
   @@index([casa, ts])
 }
 
+/**
+ * =========================
+ * Estado global por casa
+ * =========================
+ */
 model RobotState {
   id              Int      @id @default(autoincrement())
   casa            String   @unique
-  lastProcessedTs BigInt   @default(0) // último ts de ingest processado
+  lastProcessedTs BigInt   @default(0)
   updatedAt       DateTime @updatedAt
 }
 
 /**
  * =========================
- * MODELOS P/ ESTRATÉGIAS
+ * ROBOT / STRATEGY
  * =========================
  */
-
 model Robot {
   id        String   @id @default(cuid())
-  game      String   // "aviator" | "bacbo" (livre p/ agora)
-  casa      String   // "1win" | "lebull" | etc.
+  game      String
+  casa      String
   name      String
-  botToken  String?  // Telegram Bot token (opcional)
-  chatId    String?  // Telegram Chat ID  (opcional)
+  botToken  String?
+  chatId    String?
   enabled   Boolean  @default(true)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  strategies Strategy[]
+  strategies    Strategy[]
+  // 👇 relação inversa pedida pelo Prisma (Robot 1 — N SignalCursor)
+  signalCursors SignalCursor[]
 
   @@index([game, casa])
   @@index([enabled, updatedAt])
 }
 
 model Strategy {
-  id        String   @id @default(cuid())
+  id        String  @id @default(cuid())
   robotId   String
   name      String
-  active    Boolean  @default(true)
-  startHour String   // "HH:mm"
-  endHour   String   // "HH:mm"
+  active    Boolean @default(true)
+  startHour String
+  endHour   String
+  pattern   Json
 
-  // SQLite não suporta lista de primitivos; use Json
-  pattern Json       // ex.: ["gray","green","black","blue","pink"]
-
-  winAt         Int       @default(1)
-  mgCount       Int       @default(0)
-  blueThreshold Float?    // Azul: vela >= blueThreshold
-  pinkThreshold Float?    // Rosa: vela <= pinkThreshold
-  messages      Json?     // textos configuráveis da StrategyMessagesForm
-  enabled       Boolean  @default(true) // <— opcional
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
+  winAt         Int      @default(1)
+  mgCount       Int      @default(0)
+  blueThreshold Float?
+  pinkThreshold Float?
+  messages      Json?
+  enabled       Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
 
   robot Robot @relation(fields: [robotId], references: [id], onDelete: Cascade)
+
+  // 👇 relação inversa pedida pelo Prisma (Strategy 1 — 1 StrategyState; aqui como 1—N para ficar flexível)
+  strategyStates StrategyState[]
 
   @@index([robotId, active])
   @@index([startHour, endHour])
 }
 
+model SignalCursor {
+  id        String   @id @default(cuid())
+  robotId   String
+  // 👇 mantém a relação explícita
+  robot     Robot    @relation(fields: [robotId], references: [id], onDelete: Cascade)
+  lastTs    BigInt   @default(0)
+  lastId    String?
+  updatedAt DateTime @updatedAt
+
+  @@unique([robotId])
+  @@index([lastTs, updatedAt])
+}
+
+model StrategyState {
+  id         String   @id @default(cuid())
+  strategyId String
+  // 👇 mantém a relação explícita
+  strategy   Strategy @relation(fields: [strategyId], references: [id], onDelete: Cascade)
+  tail       Int      @default(0)
+  lastTs     BigInt   @default(0)
+  updatedAt  DateTime @updatedAt
+
+  @@unique([strategyId])
+}
+
 /**
  * =========================
- * Destinos p/ Telegram
+ * Destinos / Logs Telegram
  * =========================
- * Um registro por (casa, kind).
  */
 model TelegramTarget {
   id        String   @id @default(cuid())
-  game      String?  // opcional (ex.: "aviator")
-  casa      String   // "1win" | "lebull"
-  kind      String   // "win" | "loss" | "entry" (livre)
+  game      String   @default("aviator") // <— agora obrigatório
+  casa      String
+  kind      String // "win" | "loss" | "entry" | ...
   botToken  String
   chatId    String
   active    Boolean  @default(true)
-  templates Json?    // { win?: string, loss?: string, entry?: string }
+  templates Json? // { win?: string, loss?: string, entry?: string }
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  @@unique([casa, kind], name: "casa_kind")
+  @@unique([game, casa, kind], name: "game_casa_kind")
   @@index([game, casa, updatedAt])
 }
 
@@ -134,50 +180,32 @@ model TelegramLog {
   id        String   @id @default(cuid())
   createdAt DateTime @default(now())
 
-  casa      String
-  kind      String
-  chatId    String
-  ok        Boolean
-  payload   Json
-  response  Json
-}
-/// Cursor por ROBOT para leitura incremental de eventos do IngestEvent.
-/// Não conflita com RobotState (que é por casa). Use este para múltiplos bots na mesma casa.
-model SignalCursor {
-  id        String   @id @default(cuid())
-  robotId   String
-  lastTs    BigInt   @default(0)   // último ts (ms) do IngestEvent processado p/ esse robot
-  lastId    String?               // (opcional) id do último IngestEvent
-  updatedAt DateTime  @updatedAt
+  casa     String
+  kind     String
+  chatId   String
+  ok       Boolean
+  payload  Json
+  response Json
 
-  @@unique([robotId])
-  @@index([lastTs, updatedAt])
+  @@index([casa, kind, createdAt])
 }
 
-/// Estado de padrão por estratégia (tail/streak).
-/// Mantém o contador independente por Strategy (seguro p/ várias estratégias com mesmo pattern).
-model StrategyState {
-  id          String   @id @default(cuid())
-  strategyId  String
-  tail        Int      @default(0)
-  // (opcional) cache do último ts avaliado, útil p/ diagnósticos
-  lastTs      BigInt   @default(0)
-  updatedAt   DateTime @updatedAt
+/**
+ * =========================
+ * Cursores / Estados
+ * =========================
+ */
 
-  @@unique([strategyId])
-}
-
-/// Log leve para deduplicar disparos (PRE/CONFIRM) por evento+estratégia.
-/// Você já tem TelegramLog p/ resposta do Telegram; aqui é p/ "o que foi decidido disparar".
+/// Log leve p/ deduplicar disparos (PRE/CONFIRM) por evento+estratégia.
 model SignalDispatch {
-  id          String   @id @default(cuid())
-  robotId     String
-  strategyId  String
-  kind        String   // "pre" | "confirm"
-  tail        Int
-  eventId     String   // IngestEvent.id
-  dedupeKey   String   @unique
-  createdAt   DateTime @default(now())
+  id         String   @id @default(cuid())
+  robotId    String
+  strategyId String
+  kind       String // "pre" | "confirm"
+  tail       Int
+  eventId    String // IngestEvent.id
+  dedupeKey  String   @unique
+  createdAt  DateTime @default(now())
 
   @@index([robotId, strategyId, createdAt])
 }
