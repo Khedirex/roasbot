@@ -17,13 +17,14 @@ const json = (status: number, data: unknown) =>
     status,
     headers: { "Content-Type": "application/json", "Cache-Control": "no-store", ...CORS },
   });
+
 export function OPTIONS() {
   return new NextResponse(null, { status: 204, headers: CORS });
 }
 
 /** Banco -> Front */
 function toOut(t: any) {
-  const base = (t?.templates ?? {}) as any;     // <- tipagem solta só aqui
+  const base = (t?.templates ?? {}) as any;
   const sch  = (base?.schedule ?? {}) as any;
   return {
     id: t.id,
@@ -39,10 +40,19 @@ function toOut(t: any) {
   };
 }
 
+/* ----- compat c/ Next 15: params assíncrono ----- */
+type IdParams = { id: string };
+type MaybeAsyncParams = IdParams | Promise<IdParams>;
+async function getId(params: MaybeAsyncParams) {
+  const { id } = await params;
+  return id;
+}
+
 /* ---------- GET /api/robots/[id] ---------- */
-export async function GET(_req: Request, ctx: { params: { id: string } }) {
+export async function GET(_req: Request, ctx: { params: MaybeAsyncParams }) {
   try {
-    const t = await prisma.telegramTarget.findUnique({ where: { id: ctx.params.id } });
+    const id = await getId(ctx.params);
+    const t = await prisma.telegramTarget.findUnique({ where: { id } });
     if (!t) return json(404, { ok: false, error: "robot not found" });
     return json(200, { ok: true, data: toOut(t) });
   } catch (e: any) {
@@ -51,8 +61,9 @@ export async function GET(_req: Request, ctx: { params: { id: string } }) {
 }
 
 /* ---------- PATCH /api/robots/[id] ---------- */
-export async function PATCH(req: Request, ctx: { params: { id: string } }) {
+export async function PATCH(req: Request, ctx: { params: MaybeAsyncParams }) {
   try {
+    const id = await getId(ctx.params);
     const b = await req.json();
 
     // botToken: undefined=não altera | null/""=limpa | string
@@ -78,10 +89,10 @@ export async function PATCH(req: Request, ctx: { params: { id: string } }) {
 
     // Merge seguro do schedule quando vier startTime/endTime
     if ("startTime" in b || "endTime" in b) {
-      const curr = await prisma.telegramTarget.findUnique({ where: { id: ctx.params.id } });
+      const curr = await prisma.telegramTarget.findUnique({ where: { id } });
       if (!curr) return json(404, { ok: false, error: "robot not found" });
 
-      const base = (curr.templates ?? {}) as any;      // <- força objeto
+      const base = (curr.templates ?? {}) as any;
       const prev = (base.schedule ?? {}) as any;
 
       const schedule = {
@@ -92,7 +103,7 @@ export async function PATCH(req: Request, ctx: { params: { id: string } }) {
       data.templates = { ...base, schedule };
     }
 
-    const up = await prisma.telegramTarget.update({ where: { id: ctx.params.id }, data });
+    const up = await prisma.telegramTarget.update({ where: { id }, data });
     return json(200, { ok: true, data: toOut(up) });
   } catch (e: any) {
     return json(500, { ok: false, error: e?.message || "ROBOTS_ID_PATCH_FAILED" });
@@ -100,9 +111,10 @@ export async function PATCH(req: Request, ctx: { params: { id: string } }) {
 }
 
 /* ---------- DELETE /api/robots/[id] ---------- */
-export async function DELETE(_req: Request, ctx: { params: { id: string } }) {
+export async function DELETE(_req: Request, ctx: { params: MaybeAsyncParams }) {
   try {
-    await prisma.telegramTarget.delete({ where: { id: ctx.params.id } });
+    const id = await getId(ctx.params);
+    await prisma.telegramTarget.delete({ where: { id } });
     return json(200, { ok: true });
   } catch (e: any) {
     return json(500, { ok: false, error: e?.message || "ROBOTS_ID_DELETE_FAILED" });

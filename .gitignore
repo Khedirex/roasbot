@@ -62,3 +62,7 @@ roasbot.zip
 roasbot.zip
 .env.local
 roasbot/
+
+# secrets
+.env
+.env.*

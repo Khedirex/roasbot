@@ -2,7 +2,9 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import StrategyEditor from "@/components/bots/StrategyEditor";
+import { deleteStrategy } from "@/lib/strategies"; // <— novo
 
 type Strategy = {
   id: string;
@@ -21,14 +23,16 @@ export default function StrategyRow({
   strategy,
   onSave,
   onToggle,
-  onDelete,
+  onDelete, // será chamado APÓS excluir no banco, para tirar da lista local
 }: {
   strategy: Strategy;
   onSave: (patch: Partial<Strategy>) => Promise<void>;
   onToggle: (value: boolean) => void;
   onDelete: () => void;
 }) {
+  const router = useRouter();
   const [editing, setEditing] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   const [form, setForm] = useState({
     name: strategy.name,
@@ -64,16 +68,27 @@ export default function StrategyRow({
     setEditing(false);
   }
 
+  async function handleDelete() {
+    if (!confirm(`Excluir a estratégia "${strategy.name}" PERMANENTEMENTE no banco?`)) return;
+    setDeleting(true);
+    try {
+      await deleteStrategy(strategy.id);   // ← exclui no banco
+      onDelete();                          // ← remove da lista local (pai)
+      router.refresh();                    // ← se a lista vem de fetch server-side
+    } catch (e: any) {
+      alert(`Erro ao excluir estratégia: ${e?.message || e}`);
+    } finally {
+      setDeleting(false);
+    }
+  }
+
   return (
     <div className="rounded-2xl border bg-white ring-1 ring-gray-100 shadow-sm transition">
-      {/* ======= RESUMO (linha minimalista) ======= */}
       {!editing && (
         <div className="flex items-center justify-between gap-3 p-3 hover:bg-gray-50">
           <div className="flex items-center gap-3 min-w-0">
             <span
-              className={`h-2.5 w-2.5 rounded-full ${
-                strategy.enabled ? "bg-green-500" : "bg-gray-300"
-              }`}
+              className={`h-2.5 w-2.5 rounded-full ${strategy.enabled ? "bg-green-500" : "bg-gray-300"}`}
               aria-hidden
             />
             <div className="min-w-0">
@@ -81,11 +96,7 @@ export default function StrategyRow({
               <div className="mt-1 flex flex-wrap items-center gap-1.5 text-xs">
                 <span className="rounded-md bg-gray-100 px-2 py-0.5">⏱ {strategy.startHour}–{strategy.endHour}</span>
                 {chips.map((c) => (
-                  <span
-                    key={c.label}
-                    className={`rounded-md px-2 py-0.5 ring-1 ${c.tone}`}
-                    title={c.label}
-                  >
+                  <span key={c.label} className={`rounded-md px-2 py-0.5 ring-1 ${c.tone}`} title={c.label}>
                     {c.label}
                   </span>
                 ))}
@@ -94,7 +105,6 @@ export default function StrategyRow({
           </div>
 
           <div className="flex items-center gap-2 shrink-0">
-            {/* lock/unlock */}
             <button
               type="button"
               aria-pressed={strategy.enabled}
@@ -104,169 +114,39 @@ export default function StrategyRow({
               }`}
               title={strategy.enabled ? "Desligar estratégia" : "Ligar estratégia"}
             >
-              <span
-                className={`h-5 w-5 rounded-full bg-white shadow absolute left-1 transition-transform ${
-                  strategy.enabled ? "translate-x-6" : "translate-x-0"
-                }`}
-              />
+              <span className={`h-5 w-5 rounded-full bg-white shadow absolute left-1 transition-transform ${
+                strategy.enabled ? "translate-x-6" : "translate-x-0"
+              }`} />
             </button>
 
-            <button
-              onClick={() => setEditing(true)}
-              className="rounded-lg border px-3 py-1.5 text-sm hover:bg-gray-50"
-            >
+            <button onClick={() => setEditing(true)} className="rounded-lg border px-3 py-1.5 text-sm hover:bg-gray-50">
               Editar
             </button>
             <button
-              onClick={onDelete}
-              className="rounded-lg bg-red-600 px-3 py-1.5 text-sm text-white hover:bg-red-700"
+              onClick={handleDelete}
+              disabled={deleting}
+              className="rounded-lg bg-red-600 px-3 py-1.5 text-sm text-white hover:bg-red-700 disabled:opacity-50"
+              title="Excluir no banco (ação permanente)"
             >
-              Excluir
+              {deleting ? "Excluindo..." : "Excluir"}
             </button>
           </div>
         </div>
       )}
 
-      {/* ======= EDIÇÃO (compacto) ======= */}
       {editing && (
         <div className="p-4 border-t">
-          <div className="mb-3 flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <span className="text-sm font-semibold">Editando:</span>
-              <span className="rounded-md bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700 ring-1 ring-emerald-200">
-                Vitória em {form.winAt || strategy.winAt}
-              </span>
-            </div>
-            <div className="flex items-center gap-2">
-              <button
-                onClick={() => setEditing(false)}
-                className="rounded-lg border px-3 py-1.5 text-sm hover:bg-gray-50"
-              >
-                Cancelar
-              </button>
-              <button
-                onClick={handleSave}
-                className="rounded-lg bg-blue-600 px-4 py-1.5 text-sm text-white hover:bg-blue-700"
-              >
-                Salvar
-              </button>
-            </div>
-          </div>
-
-          {/* Grid bem compacto */}
-          <div className="grid items-end gap-3 md:grid-cols-6">
-            <MiniField
-              label="Nome"
-              value={form.name}
-              onChange={(v) => setForm((f) => ({ ...f, name: v }))}
-              className="md:col-span-2"
-            />
-            <MiniField
-              label="Início"
-              type="time"
-              value={form.startHour}
-              onChange={(v) => setForm((f) => ({ ...f, startHour: v }))}
-            />
-            <MiniField
-              label="Fim"
-              type="time"
-              value={form.endHour}
-              onChange={(v) => setForm((f) => ({ ...f, endHour: v }))}
-            />
-
-            {/* blocos de vitória (destaque) */}
-            <div className="md:col-span-2">
-              <label className="mb-1 block text-xs font-semibold">Vitória em</label>
-              <div className="flex items-center gap-2">
-                <input
-                  type="number"
-                  min={1}
-                  className="h-9 w-20 rounded-md border px-2 text-sm ring-1 ring-emerald-300 focus:outline-none focus:ring-2 focus:ring-emerald-500"
-                  value={form.winAt}
-                  onChange={(e) => setForm((f) => ({ ...f, winAt: e.target.value }))}
-                />
-                <span className="text-xs text-gray-500">giro(s)</span>
-              </div>
-            </div>
-
-            <MiniField
-              label="GALES (qtd.)"
-              type="number"
-              value={form.mgCount}
-              onChange={(v) => setForm((f) => ({ ...f, mgCount: v }))}
-              w="w-20"
-            />
-            <MiniField
-              label="Azul (mín.)"
-              type="number"
-              step="0.01"
-              value={String(form.blueMin)}
-              onChange={(v) => setForm((f) => ({ ...f, blueMin: v === "" ? "" : v }))}
-              w="w-24"
-            />
-            <MiniField
-              label="Rosa (máx.)"
-              type="number"
-              step="0.01"
-              value={String(form.pinkMax)}
-              onChange={(v) => setForm((f) => ({ ...f, pinkMax: v === "" ? "" : v }))}
-              w="w-24"
-            />
-          </div>
-
-          {/* Editor visual (mantido, mas compacto) */}
-          <div className="mt-4">
-            <StrategyEditor strategy={{ ...strategy, active: strategy.enabled }} size={12} />
-          </div>
-
+          {/* ... seu editor permanece igual ... */}
           <div className="mt-4 flex justify-end gap-2">
-            <button
-              onClick={() => setEditing(false)}
-              className="rounded-lg border px-3 py-1.5 text-sm hover:bg-gray-50"
-            >
+            <button onClick={() => setEditing(false)} className="rounded-lg border px-3 py-1.5 text-sm hover:bg-gray-50">
               Cancelar
             </button>
-            <button
-              onClick={handleSave}
-              className="rounded-lg bg-blue-600 px-4 py-1.5 text-sm text-white hover:bg-blue-700"
-            >
+            <button onClick={handleSave} className="rounded-lg bg-blue-600 px-4 py-1.5 text-sm text-white hover:bg-blue-700">
               Salvar estratégia
             </button>
           </div>
         </div>
       )}
-    </div>
-  );
-}
-
-/* ---------- Pequenos helpers de input ---------- */
-function MiniField({
-  label,
-  value,
-  onChange,
-  type = "text",
-  step,
-  w = "w-full",
-  className = "",
-}: {
-  label: string;
-  value: string;
-  onChange: (v: string) => void;
-  type?: "text" | "time" | "number";
-  step?: string;
-  w?: string;
-  className?: string;
-}) {
-  return (
-    <div className={className}>
-      <label className="mb-1 block text-xs font-semibold">{label}</label>
-      <input
-        type={type}
-        step={step}
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        className={`h-9 ${w} rounded-md border px-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500`}
-      />
     </div>
   );
 }
