@@ -61,3 +61,4 @@ roasbot.zip
 *.zip
 roasbot.zip
 .env.local
+roasbot/
