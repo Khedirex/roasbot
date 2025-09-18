@@ -169,7 +169,7 @@ export default function BotsPage() {
       setBots(list);
     }
 
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+     
   }, [isManager]);
 
   const casasOptions = useMemo(() => {

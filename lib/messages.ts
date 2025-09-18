@@ -29,3 +29,13 @@ const text = await renderMessage(
 );
 
 export {};
+
+// lib/messages.ts
+export type MsgVars = Record<string, string | number | boolean | null | undefined>;
+
+export function renderTemplate(tpl: string, vars: MsgVars): string {
+  return tpl.replace(/\{\{(\w+)\}\}/g, (_m, key) => {
+    const v = vars[key];
+    return (v === null || v === undefined) ? "" : String(v);
+  });
+}

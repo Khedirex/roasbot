@@ -22,9 +22,9 @@ async function resolveChannel(robot: Robot, kind: FireKind) {
   const target = await prisma.telegramTarget.findFirst({
     where: {
       casa: robot.casa,
-      kind: wanted as any, // ajuste o tipo se seu schema enumar
+  kind: wanted, // ajuste o tipo se seu schema enumar
       active: true,
-      OR: [{ game: robot.game }, { game: null }],
+      OR: [{ game: robot.game }, { game: undefined }],
     },
     orderBy: [{ game: "desc" }, { updatedAt: "desc" }],
   });
@@ -65,7 +65,7 @@ async function sendTelegram(text: string, token: string, chatId: string) {
   }
 }
 
-function parseMult(raw: any): number {
+function parseMult(raw: unknown): number {
   if (typeof raw === "number") return raw;
   if (typeof raw === "string") return parseFloat(raw.replace(",", "."));
   return 0;
