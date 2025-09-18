@@ -165,15 +165,15 @@ model TelegramTarget {
   game      String   @default("aviator") // <— agora obrigatório
   casa      String
   kind      String // "win" | "loss" | "entry" | ...
-  botToken  String
-  chatId    String
+  botToken  String?
+  chatId    String?  // <- atributo de campo OK
   active    Boolean  @default(true)
   templates Json? // { win?: string, loss?: string, entry?: string }
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  @@unique([game, casa, kind], name: "game_casa_kind")
-  @@index([game, casa, updatedAt])
+  @@unique([game, casa, kind], map: "telegram_target_game_casa_kind_uq")
+  @@index([chatId])
 }
 
 model TelegramLog {

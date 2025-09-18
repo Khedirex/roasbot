@@ -1,4 +1,3 @@
-// app/api/telegram/targets/route.ts
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 
@@ -6,167 +5,149 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
-/* ================== CORS / JSON ================== */
+/* CORS/JSON */
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
-  "Access-Control-Allow-Headers":
-    "content-type,authorization,x-api-key,x-ingest-token,x-requested-with",
+  "Access-Control-Allow-Methods": "GET,POST,PUT,OPTIONS",
+  "Access-Control-Allow-Headers": "content-type,authorization,x-api-key,x-requested-with",
 };
-const JSON_HEADERS = {
-  "Content-Type": "application/json",
-  "Cache-Control": "no-store",
-  ...CORS_HEADERS,
-};
+const JSON_HEADERS = { "Content-Type": "application/json", "Cache-Control": "no-store", ...CORS_HEADERS };
 const json = (status: number, data: unknown) =>
-  new NextResponse(
-    JSON.stringify(data, (_k, v) => (typeof v === "bigint" ? Number(v) : v)),
-    { status, headers: JSON_HEADERS },
-  );
+  new NextResponse(JSON.stringify(data, (_k, v) => (typeof v === "bigint" ? Number(v) : v)), {
+    status, headers: JSON_HEADERS,
+  });
+export function OPTIONS() { return new NextResponse(null, { status: 204, headers: CORS_HEADERS }); }
 
-export function OPTIONS() {
-  return new NextResponse(null, { status: 204, headers: CORS_HEADERS });
+/* Delegate correto */
+const TT = (prisma as any).telegramTarget as any;
+
+/* Helpers */
+const trimOrNull = (v: unknown) => (v === null || v === undefined ? null : (String(v).trim() || null));
+
+type Body = {
+  id?: string | number;
+  // aliases & campos reais
+  name?: string | null;     // alias de kind
+  kind?: string | null;
+
+  game?: string | null;
+  gameType?: string | null; // alias de game
+
+  casa?: string | null;
+  casinoSite?: string | null; // alias de casa
+
+  botToken?: string | null;
+  telegramToken?: string | null; // alias de botToken
+
+  chatId?: string | number | null;
+  telegramChatId?: string | number | null; // alias de chatId
+
+  active?: boolean | null;
+  isActive?: boolean | null; // alias de active
+
+  templates?: any | null;
+};
+
+function mapPayload(b: Body) {
+  const id = b.id != null ? String(b.id) : undefined;
+  const kind = trimOrNull(b.kind ?? b.name);
+  const game = trimOrNull(b.game ?? b.gameType);
+  const casa = trimOrNull(b.casa ?? b.casinoSite);
+  const botToken = trimOrNull(b.botToken ?? b.telegramToken);
+  const chatId = trimOrNull(b.chatId ?? b.telegramChatId);
+  const active = typeof (b.active ?? b.isActive) === "boolean" ? (b.active ?? b.isActive)! : undefined;
+  const templates = b.templates === undefined ? undefined : b.templates;
+  return { id, kind, game, casa, botToken, chatId, active, templates };
 }
 
-/* ================== Auth via token ==================
-   - Usa INGEST_TOKENS (lista) e/ou INGEST_TOKEN (único)
-   - Aceita: Authorization: Bearer | x-api-key | x-ingest-token | ?token=
-   - Se nenhum token estiver definido, endpoint fica aberto (dev-friendly)
-   - INGEST_ALLOW_ANY=true ignora tudo (apenas para testes)
-===================================================== */
-function getAllowedTokens(): string[] {
-  const raw = (process.env.INGEST_TOKENS ?? process.env.INGEST_TOKEN ?? "");
-  const tokens = raw
-    .replace(/["'`]/g, "")         // remove aspas soltas
-    .split(/[,\s]+/)               // vírgula, espaço, quebras, tabs
-    .map(s => s.trim())
-    .filter(Boolean);
-  return Array.from(new Set(tokens));
-
-}
-
-function extractIncomingToken(req: Request): string | null {
-  const hAuth = req.headers.get("authorization") || req.headers.get("Authorization");
-  if (hAuth && /^bearer\s+/i.test(hAuth)) {
-    return hAuth.replace(/^bearer\s+/i, "").trim();
-  }
-  const hApiKey =
-    req.headers.get("x-api-key") ||
-    req.headers.get("x-ingest-token") ||
-    req.headers.get("X-API-Key") ||
-    req.headers.get("X-Ingest-Token");
-  if (hApiKey) return hApiKey.trim();
-
-  const url = new URL(req.url);
-  const q = url.searchParams.get("token");
-  return q ? q.trim() : null;
-}
-
-function checkToken(req: Request): boolean {
-  // “modo livre” para debug
-  if (process.env.INGEST_ALLOW_ANY === "true") return true;
-
-  const allowed = getAllowedTokens();
-
-  // sem tokens configurados => aberto (como o comentário prometia)
-  if (allowed.length === 0) return true;
-
-  const got = extractIncomingToken(req);
-  if (!got) return false;
-
-  // logs seguros em dev
-  if (process.env.NODE_ENV !== "production") {
-    const mask = (s: string) => (s.length > 12 ? `${s.slice(0, 6)}…${s.slice(-6)}` : s);
-    console.log("[targets/auth] allowed:", allowed.map(mask).join(", "));
-    console.log("[targets/auth] got    :", mask(got));
-  }
-  return allowed.includes(got);
-}
-
-/* ================== Utils ================== */
-function toLowerOrUndef(v: string | null) {
-  const s = (v || "").trim();
-  return s ? s.toLowerCase() : undefined;
-}
-function parseBool(v: string | null): boolean | undefined {
-  if (v == null) return undefined;
-  const s = v.trim().toLowerCase();
-  if (["1", "true", "yes", "y"].includes(s)) return true;
-  if (["0", "false", "no", "n"].includes(s)) return false;
-  return undefined;
-}
-
-/** GET: lista (filtra por casa/kind/active via query) */
-export async function GET(req: Request) {
+/* GET */
+export async function GET() {
   try {
-    if (!checkToken(req)) return json(401, { error: "Unauthorized" });
-
-    const url = new URL(req.url);
-    const casaQ = toLowerOrUndef(url.searchParams.get("casa"));
-    const kindQ = toLowerOrUndef(url.searchParams.get("kind"));
-    const activeQ = parseBool(url.searchParams.get("active"));
-
-    const where: any = {};
-    if (casaQ) where.casa = casaQ;
-    if (kindQ) where.kind = kindQ;
-    if (activeQ !== undefined) where.active = activeQ;
-
-    const items = await prisma.telegramTarget.findMany({
-      where,
-      orderBy: { updatedAt: "desc" },
-      take: 200,
+    if (!TT) throw new Error("Delegate telegramTarget não encontrado no Prisma Client.");
+    const data = await TT.findMany({
+      orderBy: { createdAt: "desc" },
+      select: {
+        id: true,
+        game: true,
+        casa: true,
+        kind: true,
+        botToken: true,
+        chatId: true,
+        active: true,
+        templates: true,
+        createdAt: true,
+        updatedAt: true,
+      },
     });
-
-    return json(200, { ok: true, items });
+    return json(200, { ok: true, data });
   } catch (e: any) {
-    console.error("GET /telegram/targets error:", e);
-    return json(500, {
-      ok: false,
-      error: "server_error",
-      message: String(e?.message ?? e),
-    });
+    return json(500, { ok: false, error: e?.message || "GET_FAILED" });
   }
 }
 
-/** POST: upsert por (casa, kind) */
+/* POST/PUT — upsert sem apagar chatId quando ausente */
 export async function POST(req: Request) {
   try {
-    if (!checkToken(req)) return json(401, { error: "Unauthorized" });
+    if (!TT) throw new Error("Delegate telegramTarget não encontrado no Prisma Client.");
+    const raw = (await req.json()) as Body;
+    const { id, kind, game, casa, botToken, chatId, active, templates } = mapPayload(raw);
 
-    const body = await req.json().catch(() => null);
-    const casa = String(body?.casa || "").trim().toLowerCase();
-    const kind = String(body?.kind || "").trim().toLowerCase();
-    const botToken = String(body?.botToken || "").trim();
-    const chatId = String(body?.chatId || "").trim();
-    const active = body?.active !== false; // default: true
-
-    if (!casa || !kind || !botToken || !chatId) {
-      return json(400, {
-        ok: false,
-        error: "missing_params",
-        need: "casa, kind, botToken, chatId",
-      });
+    if (!id && !(game && casa && kind) && !chatId) {
+      return json(400, { ok: false, error: "Informe: id OU (game+casa+kind) OU chatId para identificar/criar." });
     }
 
-    // dica útil para grupos/canais
-    const groupHint =
-      /^-?\d+$/.test(chatId) && !chatId.startsWith("-")
-        ? "Para grupos/canais, o chatId costuma começar com '-'."
-        : undefined;
+    // localizar atual por prioridade: id > (game,casa,kind) > chatId
+    let current = null as any;
+    if (id) current = await TT.findUnique({ where: { id } }).catch(() => null);
+    if (!current && game && casa && kind) current = await TT.findFirst({ where: { game, casa, kind } });
+    if (!current && chatId) current = await TT.findFirst({ where: { chatId } });
 
-    const item = await prisma.telegramTarget.upsert({
-      where: { casa_kind: { casa, kind } }, // exige @@unique([casa, kind]) no schema
-      update: { botToken, chatId, active },
-      create: { casa, kind, botToken, chatId, active },
+    if (current) {
+      const dataToUpdate: any = {};
+      if (kind !== null && kind !== undefined) dataToUpdate.kind = kind;
+      if (game !== null && game !== undefined) dataToUpdate.game = game;
+      if (casa !== null && casa !== undefined) dataToUpdate.casa = casa;
+      if (botToken !== null && botToken !== undefined) dataToUpdate.botToken = botToken;
+      if (chatId !== null && chatId !== undefined) dataToUpdate.chatId = chatId; // NÃO zera se ausente
+      if (active !== undefined) dataToUpdate.active = active;
+      if (templates !== undefined) dataToUpdate.templates = templates;
+
+      const updated = await TT.update({
+        where: { id: current.id },
+        data: dataToUpdate,
+        select: {
+          id: true, game: true, casa: true, kind: true,
+          botToken: true, chatId: true, active: true, templates: true,
+          createdAt: true, updatedAt: true,
+        },
+      });
+      return json(200, { ok: true, data: updated, mode: "updated" });
+    }
+
+    // CREATE: precisa de (game,casa,kind) ou chatId
+    const dataToCreate: any = {
+      kind: kind ?? "default",
+      game: game ?? "aviator",
+      casa: casa ?? "1win",
+      botToken: botToken ?? null,
+      chatId: chatId ?? null,
+      active: active ?? true,
+    };
+    if (templates !== undefined) dataToCreate.templates = templates;
+    if (id) dataToCreate.id = id;
+
+    const created = await TT.create({
+      data: dataToCreate,
+      select: {
+        id: true, game: true, casa: true, kind: true,
+        botToken: true, chatId: true, active: true, templates: true,
+        createdAt: true, updatedAt: true,
+      },
     });
-
-    return json(200, { ok: true, item, ...(groupHint ? { hint: groupHint } : {}) });
+    return json(201, { ok: true, data: created, mode: "created" });
   } catch (e: any) {
-    console.error("POST /telegram/targets error:", e);
-    return json(500, {
-      ok: false,
-      error: "server_error",
-      message: String(e?.message ?? e),
-    });
+    return json(500, { ok: false, error: e?.message || "UPSERT_FAILED" });
   }
 }
+
+export const PUT = POST;
